@@ -17,24 +17,71 @@ class TestBackup:
         config = Configuration(None, None, None)
         backup = Backup(config)
         with patch.object(backup, "_device_backup") as mock_device_backup:
-            backup.execute()
+            assert backup.execute() == []
             mock_device_backup.assert_not_called()
 
     def test_execute_with_ip_addresses(self):
         """Test execute with IP addresses."""
         config = Configuration("192.168.1.1", None, None)
-        # Also test with multiple via a different approach
         backup = Backup(config)
         with (
-            patch.object(backup, "_device_backup") as mock_device_backup,
+            patch.object(
+                backup, "_device_backup", return_value=True
+            ) as mock_device_backup,
             patch.object(
                 config, "ip_addresses", return_value=["192.168.1.1", "192.168.1.2"]
             ),
         ):
-            backup.execute()
+            assert backup.execute() == ["192.168.1.1", "192.168.1.2"]
             assert mock_device_backup.call_count == 2
             mock_device_backup.assert_any_call("192.168.1.1")
             mock_device_backup.assert_any_call("192.168.1.2")
+
+    def test_execute_only_returns_successful_devices(self):
+        """Test execute excludes devices that could not be backed up."""
+        config = Configuration("192.168.1.1", None, None)
+        backup = Backup(config)
+        with (
+            patch.object(
+                backup, "_device_backup", side_effect=[True, False, True]
+            ) as mock_device_backup,
+            patch.object(
+                config,
+                "ip_addresses",
+                return_value=["192.168.1.1", "192.168.1.2", "192.168.1.3"],
+            ),
+        ):
+            assert backup.execute() == ["192.168.1.1", "192.168.1.3"]
+            assert mock_device_backup.call_count == 3
+
+    def test_execute_continues_after_device_error(self):
+        """Test execute continues with other devices after an unexpected error."""
+        config = Configuration("192.168.1.1", None, None)
+        backup = Backup(config)
+        with (
+            patch.object(
+                backup, "_device_backup", side_effect=[RuntimeError("boom"), True]
+            ) as mock_device_backup,
+            patch.object(
+                config, "ip_addresses", return_value=["192.168.1.1", "192.168.1.2"]
+            ),
+        ):
+            assert backup.execute() == ["192.168.1.2"]
+            assert mock_device_backup.call_count == 2
+
+    def test_execute_with_discovery(self):
+        """Test execute discovers devices when none are configured."""
+        config = Configuration(None, None, None, discover=True)
+        backup = Backup(config)
+        with (
+            patch(
+                "shelly_backup.backup.discover_shelly_devices",
+                return_value=["192.168.1.1", "192.168.1.2"],
+            ) as mock_discover,
+            patch.object(backup, "_device_backup", return_value=True),
+        ):
+            assert backup.execute() == ["192.168.1.1", "192.168.1.2"]
+            mock_discover.assert_called_once()
 
     @patch("httpx.get")
     def test_device_backup_generation_1(self, mock_get):
@@ -48,8 +95,8 @@ class TestBackup:
             mock_response.json.return_value = {"type": "SHSW-1", "mac": "ABC123"}
             mock_get.return_value = mock_response
 
-            with patch.object(backup, "_generation_1") as mock_gen1:
-                backup._device_backup("192.168.1.1")  # noqa: SLF001
+            with patch.object(backup, "_generation_1", return_value=True) as mock_gen1:
+                assert backup._device_backup("192.168.1.1") is True  # noqa: SLF001
                 mock_gen1.assert_called_once_with(
                     "192.168.1.1", {"type": "SHSW-1", "mac": "ABC123"}
                 )
@@ -66,8 +113,8 @@ class TestBackup:
             mock_response.json.return_value = {"gen": 2, "type": "SNSW-001X16EU"}
             mock_get.return_value = mock_response
 
-            with patch.object(backup, "_generation_2") as mock_gen2:
-                backup._device_backup("192.168.1.1")  # noqa: SLF001
+            with patch.object(backup, "_generation_2", return_value=True) as mock_gen2:
+                assert backup._device_backup("192.168.1.1") is True  # noqa: SLF001
                 mock_gen2.assert_called_once()
 
     @patch("httpx.get")
@@ -82,8 +129,8 @@ class TestBackup:
             mock_response.json.return_value = {"gen": 3, "type": "S3SW-001X16EU"}
             mock_get.return_value = mock_response
 
-            with patch.object(backup, "_generation_2") as mock_gen2:
-                backup._device_backup("192.168.1.1")  # noqa: SLF001
+            with patch.object(backup, "_generation_2", return_value=True) as mock_gen2:
+                assert backup._device_backup("192.168.1.1") is True  # noqa: SLF001
                 mock_gen2.assert_called_once()
 
     @patch("httpx.get")
@@ -102,7 +149,7 @@ class TestBackup:
                 patch.object(backup, "_generation_1") as mock_gen1,
                 patch.object(backup, "_generation_2") as mock_gen2,
             ):
-                backup._device_backup("192.168.1.1")  # noqa: SLF001
+                assert backup._device_backup("192.168.1.1") is False  # noqa: SLF001
                 mock_gen1.assert_not_called()
                 mock_gen2.assert_not_called()
 
@@ -118,7 +165,7 @@ class TestBackup:
             mock_get.return_value = mock_response
 
             with patch.object(backup, "_generation_1") as mock_gen1:
-                backup._device_backup("192.168.1.1")  # noqa: SLF001
+                assert backup._device_backup("192.168.1.1") is False  # noqa: SLF001
                 mock_gen1.assert_not_called()
 
     @patch("httpx.get")
@@ -133,7 +180,21 @@ class TestBackup:
             error.request = mock_request
             mock_get.side_effect = error
 
-            backup._device_backup("192.168.1.1")  # noqa: SLF001
+            assert backup._device_backup("192.168.1.1") is False  # noqa: SLF001
+
+    @patch("httpx.get")
+    def test_device_backup_invalid_json(self, mock_get):
+        """Test device backup when the device returns invalid JSON."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            backup = Backup(config)
+
+            mock_response = Mock()
+            mock_response.status_code = httpx.codes.OK
+            mock_response.json.side_effect = ValueError("Invalid JSON")
+            mock_get.return_value = mock_response
+
+            assert backup._device_backup("192.168.1.1") is False  # noqa: SLF001
 
     def test_generation_1_backup(self):
         """Test generation 1 backup process."""
@@ -146,9 +207,9 @@ class TestBackup:
                     "_device_configuration",
                     return_value={"settings": {}, "status": {}},
                 ) as mock_device_config,
-                patch.object(backup, "_store") as mock_store,
+                patch.object(backup, "_store", return_value=True) as mock_store,
             ):
-                backup._generation_1("192.168.1.1", {})  # noqa: SLF001
+                assert backup._generation_1("192.168.1.1", {}) is True  # noqa: SLF001
 
                 mock_device_config.assert_called_once()
                 call_args = mock_device_config.call_args[0][0]
@@ -157,7 +218,7 @@ class TestBackup:
                 assert "status" in call_args
                 assert call_args["settings"] == "http://192.168.1.1/settings"
                 mock_store.assert_called_once_with(
-                    "192.168.1.1", {"settings": {}, "status": {}}
+                    "192.168.1.1", {"settings": {}, "status": {}}, {}
                 )
 
     def test_generation_2_backup(self):
@@ -171,16 +232,23 @@ class TestBackup:
                     "_device_configuration",
                     return_value={"configuration": {}, "status": {}},
                 ) as mock_device_config,
-                patch.object(backup, "_store") as mock_store,
+                patch.object(backup, "_store", return_value=True) as mock_store,
             ):
-                backup._generation_2("192.168.1.1", {"gen": 2})  # noqa: SLF001
+                result = backup._generation_2(  # noqa: SLF001
+                    "192.168.1.1", {"gen": 2}
+                )
+                assert result is True
 
                 mock_device_config.assert_called_once()
                 call_args = mock_device_config.call_args[0][0]
                 assert "configuration" in call_args
                 assert "device_info" in call_args
                 assert "status" in call_args
-                mock_store.assert_called_once()
+                mock_store.assert_called_once_with(
+                    "192.168.1.1",
+                    {"configuration": {}, "status": {}},
+                    {"gen": 2},
+                )
 
     @patch("httpx.get")
     def test_device_configuration(self, mock_get):
@@ -216,22 +284,65 @@ class TestBackup:
             }
             assert mock_get.call_count == 3
 
-    @patch("shelly_backup.backup.TinyDB")
-    def test_store(self, mock_tinydb):
+    @patch("shelly_backup.backup.BackupStore")
+    def test_init_creates_store(self, mock_store_class):
+        """Test that a store is created from the configuration by default."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            Backup(config)
+
+            mock_store_class.assert_called_once_with(config.database_path())
+
+    def test_init_uses_provided_store(self):
+        """Test that an injected store is used."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            store = Mock()
+            backup = Backup(config, store=store)
+
+            assert backup._backup_store is store  # noqa: SLF001
+
+    def test_store(self):
         """Test storing device configuration."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = Configuration(None, tmpdir, None)
-            backup = Backup(config)
-
-            mock_db = mock_tinydb.return_value
+            store = Mock()
+            backup = Backup(config, store=store)
             device_settings = {"settings": {"test": "value"}}
-            backup._store("192.168.1.1", device_settings)  # noqa: SLF001
-            mock_tinydb.assert_called_once()
-            call_args = mock_tinydb.call_args[0][0]
-            assert str(call_args).endswith("shelly_backup.json")
-            mock_db.insert.assert_called_once()
-            insert_args = mock_db.insert.call_args[0][0]
-            assert insert_args["ip_address"] == "192.168.1.1"
-            assert "timestamp" in insert_args
-            assert insert_args["settings"] == device_settings
-            mock_db.close.assert_called_once()
+            device_info = {"gen": 2, "name": "Kitchen"}
+
+            result = backup._store(  # noqa: SLF001
+                "192.168.1.1", device_settings, device_info
+            )
+            assert result is True
+
+            store.add.assert_called_once()
+            record = store.add.call_args[0][0]
+            assert record["ip_address"] == "192.168.1.1"
+            assert "timestamp" in record
+            assert record["generation"] == 2
+            assert record["device_info"] == device_info
+            assert record["settings"] == device_settings
+
+    def test_store_generation_defaults_to_one(self):
+        """Test that a missing generation defaults to generation 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            store = Mock()
+            backup = Backup(config, store=store)
+
+            assert backup._store("192.168.1.1", {}) is True  # noqa: SLF001
+
+            record = store.add.call_args[0][0]
+            assert record["generation"] == 1
+            assert record["device_info"] == {}
+
+    def test_store_handles_os_error(self):
+        """Test that storage errors do not raise."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            store = Mock()
+            store.add.side_effect = OSError("disk full")
+            backup = Backup(config, store=store)
+
+            assert backup._store("192.168.1.1", {}) is False  # noqa: SLF001
