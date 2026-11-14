@@ -23,10 +23,13 @@ classifiers = [
   "Development Status :: 5 - Production/Stable",
 ]
 dependencies = [
+    "fastapi",
     "httpx",
+    "jinja2",
     "PyYAML>=6.0.3",
     "pyinstaller>=6.22.3",
     "tinydb>=4.9.0",
+    "uvicorn",
     "zeroconf",
 ]
 
@@ -41,6 +44,9 @@ tests = [
     "aioresponses",
 ]
 
+[project.scripts]
+shelly-backup = "shelly_backup.cli:main"
+
 [project.urls]
 Repository = "https://github.com/exxamalte/shelly-backup"
 Issues = "https://github.com/exxamalte/shelly-backup/issues"
@@ -48,6 +54,9 @@ Changelog = "https://github.com/exxamalte/shelly-backup/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["shelly_backup*"]
+
+[tool.setuptools.package-data]
+shelly_backup = ["templates/*.html"]
 
 [tool.ruff.lint]
 select = [
@@ -161,6 +170,7 @@ combine-as-imports = true
 split-on-trailing-comma = false
 
 [tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 testpaths = [
     "tests",
 ]

@@ -1,1 +1,2 @@
 prune tests
+recursive-include shelly_backup/templates *.html
