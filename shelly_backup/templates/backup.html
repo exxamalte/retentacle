@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Backup {{ backup.doc_id }} - {{ application_name }}{% endblock %}
+
+{% block content %}
+  <p class="breadcrumb">
+    <a href="/">Devices</a> /
+    <a href="/devices/{{ backup.ip_address }}">{{ display_name }}</a> /
+    <span>Backup {{ backup.doc_id }}</span>
+  </p>
+
+  <div class="page-header">
+    <div>
+      <h1>Backup from {{ backup.timestamp|format_timestamp }}</h1>
+      <p class="subtitle">
+        {{ display_name }} &middot; <span class="mono">{{ backup.ip_address }}</span>
+      </p>
+    </div>
+    <a class="button primary" href="/backups/{{ backup.doc_id }}/download">Download JSON</a>
+  </div>
+
+  <section class="card" aria-label="Backup metadata">
+    <dl class="meta-list">
+      <div>
+        <dt>Device</dt>
+        <dd>{{ display_name }}</dd>
+      </div>
+      <div>
+        <dt>IP address</dt>
+        <dd class="mono">{{ backup.ip_address }}</dd>
+      </div>
+      <div>
+        <dt>Generation</dt>
+        <dd>{{ backup.get('generation', '?') }}</dd>
+      </div>
+      <div>
+        <dt>Backup ID</dt>
+        <dd>#{{ backup.doc_id }}</dd>
+      </div>
+      <div>
+        <dt>Captured at</dt>
+        <dd>{{ backup.timestamp|format_timestamp }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="card json-card" aria-label="Raw backup data">
+    <h2>Raw backup data</h2>
+    <pre>{{ pretty_json }}</pre>
+  </section>
+{% endblock %}

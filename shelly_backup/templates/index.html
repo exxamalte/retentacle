@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Devices</h1>
+      <p class="subtitle">
+        {% if devices %}
+          {{ devices|length }} device{% if devices|length != 1 %}s{% endif %} with backups
+        {% else %}
+          No devices backed up yet
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {% if request.query_params.get('backup_started') %}
+    <div class="notice" role="status">
+      Backup started. New results will appear here when the run finishes.
+    </div>
+  {% endif %}
+
+  {% if scheduler.last_error %}
+    <div class="alert" role="alert">
+      <strong>Last backup failed:</strong> {{ scheduler.last_error }}
+    </div>
+  {% endif %}
+
+  <section class="stat-grid" aria-label="Backup status">
+    <div class="card">
+      <p class="stat-label">Backup interval</p>
+      <p class="stat-value">{{ scheduler.interval|format_interval }}</p>
+    </div>
+    <div class="card">
+      <p class="stat-label">Status</p>
+      <p class="stat-value">
+        {% if not scheduler.enabled %}
+          <span class="badge muted">Automatic backups off</span>
+        {% elif scheduler.running %}
+          <span class="badge warning">Backup running</span>
+        {% else %}
+          <span class="badge success">Scheduled</span>
+        {% endif %}
+      </p>
+    </div>
+    <div class="card">
+      <p class="stat-label">Last run</p>
+      <p class="stat-value">{{ scheduler.last_run|format_timestamp }}</p>
+    </div>
+    <div class="card">
+      <p class="stat-label">Next run</p>
+      <p class="stat-value">{{ scheduler.next_run|format_timestamp }}</p>
+    </div>
+  </section>
+
+  {% if devices %}
+    <section class="card" aria-label="Devices">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Device</th>
+              <th scope="col">Generation</th>
+              <th scope="col">Backups</th>
+              <th scope="col">Last backup</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for device in devices %}
+              <tr>
+                <td>
+                  <a class="device-name" href="/devices/{{ device.ip_address }}">{{ device.display_name }}</a><br>
+                  <span class="device-ip">{{ device.ip_address }}</span>
+                </td>
+                <td>
+                  <span class="badge">Gen {{ device.latest.get('generation', '?') }}</span>
+                </td>
+                <td>{{ device.backup_count }}</td>
+                <td>{{ device.latest.timestamp|format_timestamp }}</td>
+                <td>
+                  <a class="button small" href="/devices/{{ device.ip_address }}">View backups</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% else %}
+    <section class="card empty">
+      <h2>No backups yet</h2>
+      <p>
+        The first backup will run automatically according to the configured
+        interval. You can also start one right now.
+      </p>
+      <form method="post" action="/backup">
+        <button class="button primary" type="submit">Run backup now</button>
+      </form>
+    </section>
+  {% endif %}
+
+  <p class="footer-note">Database: <span class="mono">{{ database_path }}</span></p>
+{% endblock %}

@@ -87,6 +87,35 @@ class TestServer:
         assert "SHSW-1" in response.text
         assert "192.168.1.10" in response.text
         assert "192.168.1.11" in response.text
+        assert "View backups" in response.text
+
+    def test_index_shows_status_and_backup_started_notice(self):
+        """Test the overview page shows scheduler status and the notice."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/?backup_started=1")
+
+        assert response.status_code == 200
+        assert "Backup started" in response.text
+        assert "Run backup now" in response.text
+        assert "Backup interval" in response.text
+        assert "Last run" in response.text
+        assert "Next run" in response.text
+        assert "Automatic backups off" in response.text
+        assert "No backups yet" in response.text
+
+    def test_index_shows_last_error(self):
+        """Test the overview page shows the last scheduler error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.scheduler.last_error = "Device unreachable"
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert "Last backup failed" in response.text
+        assert "Device unreachable" in response.text
 
     def test_device_page(self):
         """Test the device page lists backups newest first."""
@@ -106,6 +135,47 @@ class TestServer:
         assert "Kitchen" in response.text
         assert "/backups/2" in response.text
         assert "/backups/1" in response.text
+        assert "Download" in response.text
+        assert "Generation 2" in response.text
+
+    def test_device_page_shows_model(self):
+        """Test the device page shows the device model."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[_record(device_info={"gen": 2, "model": "SNSW-001P16EU"})],
+            )
+            with TestClient(app) as client:
+                response = client.get("/devices/192.168.1.10")
+
+        assert response.status_code == 200
+        assert "SNSW-001P16EU" in response.text
+
+    def test_legacy_records_render(self):
+        """Test that records without generation or device info still render."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[
+                    {
+                        "ip_address": "192.168.1.20",
+                        "timestamp": "2026-11-15T10:00:00+00:00",
+                        "settings": {"settings": {}},
+                    }
+                ],
+            )
+            with TestClient(app) as client:
+                index_response = client.get("/")
+                device_response = client.get("/devices/192.168.1.20")
+                doc_id = app.state.store.all()[0]["doc_id"]
+                backup_response = client.get(f"/backups/{doc_id}")
+
+        assert index_response.status_code == 200
+        assert "192.168.1.20" in index_response.text
+        assert device_response.status_code == 200
+        assert "192.168.1.20" in device_response.text
+        assert backup_response.status_code == 200
+        assert "192.168.1.20" in backup_response.text
 
     def test_device_page_unknown_device(self):
         """Test the device page for an unknown device."""
@@ -128,6 +198,9 @@ class TestServer:
         assert "Kitchen" in response.text
         assert "settings" in response.text
         assert "Download JSON" in response.text
+        assert "Raw backup data" in response.text
+        assert "Backup ID" in response.text
+        assert f"#{doc_id}" in response.text
 
     def test_backup_page_unknown_backup(self):
         """Test the backup page for an unknown backup."""

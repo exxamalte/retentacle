@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}{{ display_name }} - {{ application_name }}{% endblock %}
+
+{% block content %}
+  <p class="breadcrumb">
+    <a href="/">Devices</a> / <span>{{ display_name }}</span>
+  </p>
+
+  <div class="page-header">
+    <div>
+      <h1>{{ display_name }}</h1>
+      <p class="subtitle">
+        <span class="mono">{{ ip_address }}</span>
+        &middot; {{ backups|length }} backup{% if backups|length != 1 %}s{% endif %}
+      </p>
+    </div>
+    <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
+  </div>
+
+  <section class="card" aria-label="Backups for {{ display_name }}">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Backup time</th>
+            <th scope="col">Generation</th>
+            <th scope="col">Model</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for backup in backups %}
+            {% set device_info = backup.get('device_info') or {} %}
+            <tr>
+              <td>{{ backup.timestamp|format_timestamp }}</td>
+              <td><span class="badge">Gen {{ backup.get('generation', '?') }}</span></td>
+              <td>
+                {{ device_info.get('model')
+                   or device_info.get('type')
+                   or device_info.get('app')
+                   or '—' }}
+              </td>
+              <td>
+                <div class="row-actions">
+                  <a class="button small" href="/backups/{{ backup.doc_id }}">View</a>
+                  <a class="button small" href="/backups/{{ backup.doc_id }}/download">Download</a>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
