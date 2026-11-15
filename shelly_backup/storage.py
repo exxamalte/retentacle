@@ -29,7 +29,7 @@ def _timestamp(record: BackupRecord) -> str:
     return str(record.get("timestamp", ""))
 
 
-def _display_name(record: BackupRecord) -> str:
+def device_display_name(record: BackupRecord) -> str:
     """Return a human-readable device name for a backup record."""
     device_info = record.get("device_info") or {}
     for key in ("name", "model", "type", "app"):
@@ -112,7 +112,7 @@ class BackupStore:
             if summary is None:
                 summaries[ip_address] = {
                     "ip_address": ip_address,
-                    "display_name": _display_name(record),
+                    "display_name": device_display_name(record),
                     "backup_count": 1,
                     "latest": record,
                 }
@@ -120,7 +120,7 @@ class BackupStore:
             summary["backup_count"] += 1
             if _timestamp(record) > _timestamp(summary["latest"]):
                 summary["latest"] = record
-                summary["display_name"] = _display_name(record)
+                summary["display_name"] = device_display_name(record)
         return sorted(
             summaries.values(), key=lambda item: _ip_sort_key(item["ip_address"])
         )
