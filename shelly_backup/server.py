@@ -9,6 +9,7 @@ from urllib.parse import quote
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.datastructures import URL
 import uvicorn
 
 from .backup import Backup
@@ -116,9 +117,10 @@ def _register_backup_routes(
         """Back up all registered devices in the background."""
         scheduler.queue()
         background_tasks.add_task(scheduler.run_once, _registered_ip_addresses(store))
+        parsed_redirect = URL(redirect)
         target = (
             redirect
-            if redirect.startswith("/") and not redirect.startswith("//")
+            if parsed_redirect.is_relative_url and parsed_redirect.path.startswith("/")
             else "/"
         )
         return RedirectResponse(url=f"{target}?backup_started=1", status_code=303)
