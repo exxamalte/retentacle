@@ -54,6 +54,10 @@
       box-sizing: border-box;
     }
 
+    [hidden] {
+      display: none !important;
+    }
+
     body {
       margin: 0;
       min-height: 100vh;
@@ -425,6 +429,62 @@
       font-size: 0.8rem;
     }
 
+    .backup-progress {
+      margin: 0 0 1.25rem;
+      padding: 0.9rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 0.7rem;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .backup-progress-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.55rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .backup-progress-count {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .progress-track {
+      height: 0.6rem;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-muted);
+    }
+
+    .progress-fill {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), #7c3aed);
+      transition: width 220ms ease;
+    }
+
+    .progress-fill.indeterminate {
+      width: 35%;
+      animation: progress-indeterminate 1.2s ease-in-out infinite;
+    }
+
+    @keyframes progress-indeterminate {
+      0% {
+        transform: translateX(-110%);
+      }
+
+      100% {
+        transform: translateX(320%);
+      }
+    }
+
     @media (max-width: 640px) {
       main {
         padding: 1.25rem 0.9rem 2.5rem;
@@ -457,14 +517,162 @@
         <span class="brand-text">{{ application_name }}</span>
       </a>
       <div class="header-actions">
-        <form method="post" action="/backup">
+        <form method="post" action="/backup?redirect={{ request.url.path }}">
           <button class="button primary" type="submit">Run backup now</button>
         </form>
       </div>
     </div>
   </header>
   <main>
+    <div class="backup-progress" data-backup-progress hidden aria-live="polite">
+      <div class="backup-progress-header">
+        <span data-progress-title>Backup in progress…</span>
+        <span class="backup-progress-count" data-progress-count></span>
+      </div>
+      <div
+        class="progress-track"
+        data-progress-track
+        role="progressbar"
+        aria-label="Backup progress"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+      >
+        <div class="progress-fill" data-progress-fill></div>
+      </div>
+    </div>
     {% block content %}{% endblock %}
   </main>
+  <script>
+    (() => {
+      const initialRunCount = Number("{{ request.app.state.scheduler.run_count }}");
+      const initialActive = {{ 'true' if request.app.state.scheduler.active else 'false' }};
+      const progress = document.querySelector('[data-backup-progress]');
+      const track = document.querySelector('[data-progress-track]');
+      const fill = document.querySelector('[data-progress-fill]');
+      const title = document.querySelector('[data-progress-title]');
+      const count = document.querySelector('[data-progress-count]');
+      const statusBadge = document.querySelector('[data-scheduler-status]');
+
+      let sawActive = initialActive;
+      let lastRunCount = initialRunCount;
+
+      function renderProgress(status) {
+        const info = status.progress || {};
+        const total = Number(info.total) || 0;
+        const completed = Number(info.completed) || 0;
+        const hasProgress = Boolean(status.queued) || total > 0;
+
+        if (!status.active) {
+          if (sawActive) {
+            const results = Array.isArray(info.results) ? info.results : [];
+            const failures = results.filter((result) => !result.success).length;
+            progress.hidden = false;
+            fill.classList.remove('indeterminate');
+            fill.style.width = '100%';
+            track.setAttribute('aria-valuenow', '100');
+            title.textContent = status.last_error || failures > 0
+              ? 'Backup finished with errors'
+              : 'Backup complete';
+            if (failures > 0) {
+              count.textContent = failures + ' failed';
+            } else {
+              count.textContent = total > 0 ? completed + ' of ' + total : '';
+            }
+          } else {
+            progress.hidden = true;
+          }
+          return;
+        }
+
+        if (!hasProgress) {
+          progress.hidden = true;
+          return;
+        }
+
+        progress.hidden = false;
+        if (total > 0) {
+          const percent = Math.min(
+            100,
+            Math.round((completed / total) * 100)
+          );
+          fill.classList.remove('indeterminate');
+          fill.style.width = percent + '%';
+          track.setAttribute('aria-valuenow', String(percent));
+          title.textContent = completed >= total
+            ? 'Backup complete'
+            : 'Backing up devices…';
+          count.textContent = completed + ' of ' + total;
+        } else {
+          fill.classList.add('indeterminate');
+          fill.style.width = '';
+          track.setAttribute('aria-valuenow', '0');
+          title.textContent = 'Starting backup…';
+          count.textContent = '';
+        }
+      }
+
+      function renderStatus(status) {
+        if (!statusBadge) {
+          return;
+        }
+        if (status.active) {
+          statusBadge.textContent = 'Backup running';
+          statusBadge.className = 'badge warning';
+        } else {
+          statusBadge.textContent = status.enabled
+            ? 'Scheduled'
+            : 'Automatic backups off';
+          statusBadge.className = status.enabled
+            ? 'badge success'
+            : 'badge muted';
+        }
+      }
+
+      async function poll() {
+        let status;
+        try {
+          const response = await fetch('/api/status', {
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
+          });
+          if (!response.ok) {
+            throw new Error('Status request failed');
+          }
+          status = await response.json();
+        } catch (error) {
+          window.setTimeout(poll, 2000);
+          return;
+        }
+
+        if (status.active) {
+          sawActive = true;
+        }
+
+        renderProgress(status);
+        renderStatus(status);
+
+        const finished = !status.active && sawActive;
+        const changed = status.run_count !== lastRunCount;
+        if (!status.active && (finished || changed)) {
+          // Let the completed bar show briefly, then reload without the
+          // query string so one-off notices disappear.
+          window.setTimeout(() => {
+            window.location.replace(window.location.pathname);
+          }, 500);
+          return;
+        }
+
+        if (!status.active) {
+          sawActive = false;
+          lastRunCount = status.run_count;
+        }
+
+        window.setTimeout(poll, status.active ? 500 : 2000);
+      }
+
+      poll();
+    })();
+  </script>
 </body>
 </html>

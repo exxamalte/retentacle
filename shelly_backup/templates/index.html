@@ -35,11 +35,11 @@
       <p class="stat-label">Status</p>
       <p class="stat-value">
         {% if not scheduler.enabled %}
-          <span class="badge muted">Automatic backups off</span>
-        {% elif scheduler.running %}
-          <span class="badge warning">Backup running</span>
+          <span class="badge muted" data-scheduler-status>Automatic backups off</span>
+        {% elif scheduler.active %}
+          <span class="badge warning" data-scheduler-status>Backup running</span>
         {% else %}
-          <span class="badge success">Scheduled</span>
+          <span class="badge success" data-scheduler-status>Scheduled</span>
         {% endif %}
       </p>
     </div>

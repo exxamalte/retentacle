@@ -78,11 +78,18 @@ The server has no authentication. Only expose it on networks you trust.
 * `/devices/<ip-address>` - all backups for one device, newest first.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
+* `/api/status` - scheduler status and live backup progress as JSON.
 * `/health` - server and scheduler status as JSON.
 
-A **Run backup now** button is available on every page. The device detail page
-also has a **Back up this device** button to back up just that device without
-waiting for the next scheduled run.
+A **Run backup now** button is available on every page and backs up all devices
+currently listed in the overview. If no devices have been registered yet, it
+falls back to the configured or discovered devices. The device detail page also
+has a **Back up this device** button to back up just that device without waiting
+for the next scheduled run.
+
+While a backup is running, the page shows a live progress bar and updates the
+status automatically. Once the run finishes, the page reloads so newly created
+backups appear without a manual refresh.
 
 ## One-shot backup
 

@@ -4,10 +4,12 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.datastructures import URL
 import uvicorn
 
 from .backup import Backup
@@ -64,8 +66,15 @@ def _scheduler_status(scheduler: BackupScheduler, store: BackupStore) -> dict:
     """Return scheduler and storage status information."""
     return {
         "status": "ok",
+        "enabled": scheduler.enabled,
         "started": scheduler.started,
         "running": scheduler.running,
+        "queued": scheduler.queued,
+        "active": scheduler.active,
+        "progress": scheduler.progress,
+        "started_at": (
+            scheduler.started_at.isoformat() if scheduler.started_at else None
+        ),
         "last_run": scheduler.last_run.isoformat() if scheduler.last_run else None,
         "last_error": scheduler.last_error,
         "next_run": scheduler.next_run.isoformat() if scheduler.next_run else None,
@@ -73,6 +82,11 @@ def _scheduler_status(scheduler: BackupScheduler, store: BackupStore) -> dict:
         "database": str(store.path),
         "devices": len(store.devices()),
     }
+
+
+def _registered_ip_addresses(store: BackupStore) -> list[str] | None:
+    """Return the IP addresses of registered devices, or None when empty."""
+    return [str(device["ip_address"]) for device in store.devices()] or None
 
 
 def _register_device_backup_route(
@@ -87,9 +101,46 @@ def _register_device_backup_route(
             raise HTTPException(status_code=404, detail="Device not found")
         success = await scheduler.run_device(ip_address)
         result = "backup_done" if success else "backup_failed"
+        safe_ip_address = quote(ip_address, safe="")
         return RedirectResponse(
-            url=f"/devices/{ip_address}?{result}=1", status_code=303
+            url=f"/devices/{safe_ip_address}?{result}=1", status_code=303
         )
+
+
+def _register_backup_routes(
+    app: FastAPI, store: BackupStore, scheduler: BackupScheduler
+) -> None:
+    """Register the global backup and status routes."""
+
+    @app.post("/backup")
+    async def trigger_backup(background_tasks: BackgroundTasks, redirect: str = "/"):
+        """Back up all registered devices in the background."""
+        scheduler.queue()
+        background_tasks.add_task(scheduler.run_once, _registered_ip_addresses(store))
+        parsed_redirect = URL(redirect)
+        path = parsed_redirect.path
+        target = (
+            path
+            if not parsed_redirect.scheme
+            and not parsed_redirect.netloc
+            and path.startswith("/")
+            and not path.startswith("//")
+            and "\\" not in path
+            and "\r" not in path
+            and "\n" not in path
+            else "/"
+        )
+        return RedirectResponse(url=f"{target}?backup_started=1", status_code=303)
+
+    @app.get("/api/status")
+    async def status():
+        """Return scheduler status and backup progress as JSON."""
+        return _scheduler_status(scheduler, store)
+
+    @app.get("/health")
+    async def health():
+        """Return basic server and scheduler status."""
+        return _scheduler_status(scheduler, store)
 
 
 def _register_routes(
@@ -157,16 +208,7 @@ def _register_routes(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    @app.post("/backup")
-    async def trigger_backup(request: Request, background_tasks: BackgroundTasks):
-        """Trigger a backup run in the background."""
-        background_tasks.add_task(request.app.state.scheduler.run_once)
-        return RedirectResponse(url="/?backup_started=1", status_code=303)
-
-    @app.get("/health")
-    async def health():
-        """Return basic server and scheduler status."""
-        return _scheduler_status(scheduler, store)
+    _register_backup_routes(app, store, scheduler)
 
 
 def create_app(

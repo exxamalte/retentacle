@@ -1,5 +1,6 @@
 """Shelly Backup."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 import logging
 
@@ -10,6 +11,9 @@ from .discovery import discover_shelly_devices
 from .storage import BackupStore
 
 _LOGGER = logging.getLogger(__name__)
+
+StartCallback = Callable[[int], None]
+ProgressCallback = Callable[[str, bool], None]
 
 
 class Backup:
@@ -23,20 +27,35 @@ class Backup:
         self._configuration = configuration
         self._backup_store = store or BackupStore(configuration.database_path())
 
-    def execute(self) -> list[str]:
-        """Run device backup and return the IP addresses backed up."""
-        ip_addresses = self._configuration.ip_addresses()
-        if not ip_addresses and self._configuration.discover():
-            _LOGGER.info("Discovering Shelly devices via mDNS...")
-            ip_addresses = discover_shelly_devices()
+    def execute(
+        self,
+        ip_addresses: list[str] | None = None,
+        on_start: StartCallback | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> list[str]:
+        """Run device backup for the given or configured devices."""
+        if ip_addresses is None:
+            ip_addresses = self._configuration.ip_addresses()
+            if not ip_addresses and self._configuration.discover():
+                _LOGGER.info("Discovering Shelly devices via mDNS...")
+                ip_addresses = discover_shelly_devices()
         if not ip_addresses:
             _LOGGER.warning(
                 "No IP addresses of Shelly devices specified. Unable to continue."
             )
+            if on_start is not None:
+                on_start(0)
             return []
-        return [
-            ip_address for ip_address in ip_addresses if self.backup_device(ip_address)
-        ]
+        if on_start is not None:
+            on_start(len(ip_addresses))
+        backed_up: list[str] = []
+        for ip_address in ip_addresses:
+            success = self.backup_device(ip_address)
+            if success:
+                backed_up.append(ip_address)
+            if on_progress is not None:
+                on_progress(ip_address, success)
+        return backed_up
 
     def backup_device(self, ip_address: str) -> bool:
         """Back up a single device and return whether it succeeded."""

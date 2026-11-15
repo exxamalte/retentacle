@@ -4,6 +4,7 @@ import tempfile
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
+import pytest
 
 from shelly_backup.configuration import Configuration
 from shelly_backup.server import _format_interval, create_app, run_server
@@ -117,6 +118,65 @@ class TestServer:
         assert "Last backup failed" in response.text
         assert "Device unreachable" in response.text
 
+    def test_index_has_progress_bar_and_live_updates(self):
+        """Test the page includes the progress bar and status polling."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert "data-backup-progress" in response.text
+        assert "data-progress-fill" in response.text
+        assert "data-scheduler-status" in response.text
+        assert "/api/status" in response.text
+        assert "window.location.replace" in response.text
+
+    def test_api_status(self):
+        """Test the status API returns scheduler and progress information."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                response = client.get("/api/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["enabled"] is False
+        assert data["active"] is False
+        assert data["queued"] is False
+        assert data["devices"] == 1
+        assert data["progress"] == {
+            "total": 0,
+            "completed": 0,
+            "current": None,
+            "percent": 0,
+            "results": [],
+        }
+
+    def test_api_status_reports_progress(self):
+        """Test the status API exposes per-device backup progress."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            scheduler = app.state.scheduler
+            scheduler.progress_total = 3
+            scheduler.progress_completed = 1
+            scheduler.progress_current = "192.168.1.11"
+            scheduler.progress_results = [
+                {"ip_address": "192.168.1.10", "success": True}
+            ]
+            with TestClient(app) as client:
+                response = client.get("/api/status")
+
+        data = response.json()
+        assert data["progress"]["total"] == 3
+        assert data["progress"]["completed"] == 1
+        assert data["progress"]["current"] == "192.168.1.11"
+        assert data["progress"]["percent"] == 33
+        assert data["progress"]["results"] == [
+            {"ip_address": "192.168.1.10", "success": True}
+        ]
+
     def test_device_page(self):
         """Test the device page lists backups newest first."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -161,6 +221,32 @@ class TestServer:
         assert response.status_code == 200
         assert 'action="/devices/192.168.1.10/backup"' in response.text
         assert "Back up this device" in response.text
+        assert "data-backup-progress" in response.text
+        assert 'action="/backup?redirect=/devices/192.168.1.10"' in response.text
+
+    def test_pages_use_generation_1_configured_name(self):
+        """Test that generation 1 devices show their configured name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[
+                    _record(
+                        ip_address="10.10.4.130",
+                        generation=1,
+                        device_info={"gen": 1, "type": "SHSW-25"},
+                        settings={"settings": {"name": "Dining Room"}},
+                    )
+                ],
+            )
+            with TestClient(app) as client:
+                index_response = client.get("/")
+                device_response = client.get("/devices/10.10.4.130")
+                doc_id = app.state.store.all()[0]["doc_id"]
+                backup_response = client.get(f"/backups/{doc_id}")
+
+        assert "Dining Room" in index_response.text
+        assert "Dining Room" in device_response.text
+        assert "Dining Room" in backup_response.text
 
     def test_manual_device_backup(self):
         """Test backing up a single device from its detail page."""
@@ -309,7 +395,97 @@ class TestServer:
                 scheduler.run_once = AsyncMock()
                 response = client.post("/backup", follow_redirects=False)
 
-                scheduler.run_once.assert_awaited_once()
+                scheduler.run_once.assert_awaited_once_with(None)
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/?backup_started=1"
+
+    def test_trigger_backup_marks_run_as_queued(self):
+        """Test that triggering a backup makes it visible as active immediately."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                client.post("/backup", follow_redirects=False)
+
+                assert scheduler.queued is True
+                assert scheduler.active is True
+
+    def test_trigger_backup_returns_to_current_page(self):
+        """Test that triggering a backup keeps the user on the current page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post(
+                    "/backup?redirect=/devices/192.168.1.10",
+                    follow_redirects=False,
+                )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/devices/192.168.1.10?backup_started=1"
+
+    @pytest.mark.parametrize(
+        "redirect",
+        [
+            "https://example.com",
+            "//example.com",
+            "/\\example.com",
+            "devices/192.168.1.10",
+            "",
+        ],
+    )
+    def test_trigger_backup_rejects_unsafe_redirect(self, redirect):
+        """Test that the redirect target cannot leave the application."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post(
+                    f"/backup?redirect={redirect}",
+                    follow_redirects=False,
+                )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/?backup_started=1"
+
+    def test_trigger_backup_drops_redirect_query(self):
+        """Test that only the redirect path is used."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post(
+                    "/backup?redirect=/devices/192.168.1.10?foo=bar",
+                    follow_redirects=False,
+                )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/devices/192.168.1.10?backup_started=1"
+
+    def test_trigger_backup_uses_registered_devices(self):
+        """Test that the backup button backs up all registered devices."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[
+                    _record(ip_address="192.168.1.10"),
+                    _record(ip_address="192.168.1.11"),
+                    _record(ip_address="10.0.0.1"),
+                ],
+            )
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post("/backup", follow_redirects=False)
+
+                scheduler.run_once.assert_awaited_once_with(
+                    ["10.0.0.1", "192.168.1.10", "192.168.1.11"]
+                )
 
         assert response.status_code == 303
         assert response.headers["location"] == "/?backup_started=1"

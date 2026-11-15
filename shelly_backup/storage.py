@@ -29,13 +29,45 @@ def _timestamp(record: BackupRecord) -> str:
     return str(record.get("timestamp", ""))
 
 
+def _configured_name(record: BackupRecord) -> str | None:
+    """Return the configured device name from a backup record, if present."""
+    settings = record.get("settings") or {}
+    if not isinstance(settings, dict):
+        return None
+    # Generation 1 stores the configured name at settings.settings.name.
+    generation_1_settings = settings.get("settings")
+    if isinstance(generation_1_settings, dict):
+        name = generation_1_settings.get("name")
+        if name:
+            return str(name)
+    # Generation 2 and 3 store it at settings.configuration.sys.device.name.
+    generation_2_settings = settings.get("configuration")
+    if isinstance(generation_2_settings, dict):
+        system_settings = generation_2_settings.get("sys")
+        if isinstance(system_settings, dict):
+            device_settings = system_settings.get("device")
+            if isinstance(device_settings, dict):
+                name = device_settings.get("name")
+                if name:
+                    return str(name)
+    return None
+
+
 def device_display_name(record: BackupRecord) -> str:
     """Return a human-readable device name for a backup record."""
     device_info = record.get("device_info") or {}
-    for key in ("name", "model", "type", "app"):
-        value = device_info.get(key)
-        if value:
-            return str(value)
+    if isinstance(device_info, dict):
+        name = device_info.get("name")
+        if name:
+            return str(name)
+    name = _configured_name(record)
+    if name:
+        return name
+    if isinstance(device_info, dict):
+        for key in ("model", "type", "app"):
+            value = device_info.get(key)
+            if value:
+                return str(value)
     return str(record.get("ip_address") or "Unknown device")
 
 

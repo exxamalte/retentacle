@@ -37,6 +37,39 @@ class TestBackup:
             mock_device_backup.assert_any_call("192.168.1.1")
             mock_device_backup.assert_any_call("192.168.1.2")
 
+    def test_execute_with_explicit_ip_addresses(self):
+        """Test execute backs up only the provided devices."""
+        config = Configuration("192.168.1.1", None, None)
+        backup = Backup(config)
+        with (
+            patch.object(
+                backup, "_device_backup", return_value=True
+            ) as mock_device_backup,
+            patch.object(config, "ip_addresses") as mock_ip_addresses,
+            patch("shelly_backup.backup.discover_shelly_devices") as mock_discover,
+        ):
+            assert backup.execute(["192.168.1.2", "192.168.1.3"]) == [
+                "192.168.1.2",
+                "192.168.1.3",
+            ]
+
+            mock_ip_addresses.assert_not_called()
+            mock_discover.assert_not_called()
+            assert mock_device_backup.call_count == 2
+
+    def test_execute_with_empty_ip_addresses(self):
+        """Test that an explicit empty list does not fall back to configuration."""
+        config = Configuration("192.168.1.1", None, None)
+        backup = Backup(config)
+        with (
+            patch.object(backup, "_device_backup") as mock_device_backup,
+            patch.object(config, "ip_addresses") as mock_ip_addresses,
+        ):
+            assert backup.execute([]) == []
+
+            mock_ip_addresses.assert_not_called()
+            mock_device_backup.assert_not_called()
+
     def test_execute_only_returns_successful_devices(self):
         """Test execute excludes devices that could not be backed up."""
         config = Configuration("192.168.1.1", None, None)
