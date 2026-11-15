@@ -4,6 +4,8 @@
 * Run as a long-running server with scheduled backups.
 * Add a web UI for browsing backups per device and viewing raw backup data.
 * Add a manual per-device backup action on the device detail page.
+* Make the global "Run backup now" action back up all registered devices.
+* Add a live backup progress bar and automatic page refresh when a run finishes.
 * Show configured device names for generation 1 devices.
 * Add `--interval`, `--host`, and `--port` options.
 * Add `--once` for the original single-run backup behaviour.

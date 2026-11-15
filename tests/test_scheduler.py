@@ -4,7 +4,7 @@ import asyncio
 from datetime import timedelta
 import threading
 import time
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 
@@ -21,7 +21,7 @@ class SlowBackup:
         self.max_active = 0
         self._lock = threading.Lock()
 
-    def execute(self):
+    def execute(self, ip_addresses=None, on_start=None, on_progress=None):
         """Run a slow fake backup."""
         with self._lock:
             self.calls += 1
@@ -35,6 +35,35 @@ class SlowBackup:
     def backup_device(self, ip_address):
         """Run a slow fake single-device backup."""
         return bool(self.execute())
+
+
+class ProgressBackup:
+    """Backup fake that reports progress."""
+
+    def execute(self, ip_addresses=None, on_start=None, on_progress=None):
+        """Report progress for two fake devices."""
+        on_start(2)
+        on_progress("192.168.1.10", True)
+        on_progress("192.168.1.11", False)
+        return ["192.168.1.10"]
+
+
+class BlockingProgressBackup:
+    """Backup fake that pauses midway so progress can be inspected."""
+
+    def __init__(self):
+        """Initialise the fake."""
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def execute(self, ip_addresses=None, on_start=None, on_progress=None):
+        """Pause after the first device until released."""
+        on_start(2)
+        on_progress("192.168.1.10", True)
+        self.started.set()
+        self.release.wait(timeout=1)
+        on_progress("192.168.1.11", True)
+        return ["192.168.1.10", "192.168.1.11"]
 
 
 class TestBackupScheduler:
@@ -66,7 +95,7 @@ class TestBackupScheduler:
 
         await scheduler.run_once()
 
-        backup.execute.assert_called_once_with()
+        backup.execute.assert_called_once_with(None, ANY, ANY)
         assert scheduler.last_backed_up == ["192.168.1.10"]
         assert scheduler.last_error is None
         assert scheduler.run_count == 1
@@ -111,7 +140,96 @@ class TestBackupScheduler:
 
         await scheduler.run_once()
 
-        mock_to_thread.assert_awaited_once_with(backup.execute)
+        mock_to_thread.assert_awaited_once_with(backup.execute, None, ANY, ANY)
+
+    @pytest.mark.asyncio
+    async def test_run_once_with_ip_addresses(self):
+        """Test that run_once backs up the provided devices."""
+        backup = Mock()
+        backup.execute.return_value = ["192.168.1.10"]
+        scheduler = BackupScheduler(backup, 60)
+
+        await scheduler.run_once(["192.168.1.10"])
+
+        backup.execute.assert_called_once_with(["192.168.1.10"], ANY, ANY)
+        assert scheduler.last_backed_up == ["192.168.1.10"]
+
+    @pytest.mark.asyncio
+    async def test_run_once_tracks_progress(self):
+        """Test that a backup run reports per-device progress."""
+        scheduler = BackupScheduler(ProgressBackup(), 60)
+
+        await scheduler.run_once()
+
+        progress = scheduler.progress
+        assert progress["total"] == 2
+        assert progress["completed"] == 2
+        assert progress["percent"] == 100
+        assert progress["current"] is None
+        assert progress["results"] == [
+            {"ip_address": "192.168.1.10", "success": True},
+            {"ip_address": "192.168.1.11", "success": False},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_progress_is_available_while_running(self):
+        """Test that progress can be read while a backup is still running."""
+        backup = BlockingProgressBackup()
+        scheduler = BackupScheduler(backup, 60)
+
+        task = asyncio.create_task(scheduler.run_once())
+        try:
+            assert await asyncio.to_thread(backup.started.wait, 1) is True
+            assert scheduler.running is True
+            assert scheduler.progress["total"] == 2
+            assert scheduler.progress["completed"] == 1
+            assert scheduler.progress["percent"] == 50
+        finally:
+            backup.release.set()
+            await task
+
+        assert scheduler.progress["completed"] == 2
+        assert scheduler.progress["percent"] == 100
+
+    @pytest.mark.asyncio
+    async def test_run_once_resets_previous_progress(self):
+        """Test that a new run clears progress from the previous run."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(backup, 60)
+        scheduler.progress_total = 5
+        scheduler.progress_completed = 3
+        scheduler.progress_results = [{"ip_address": "192.168.1.10"}]
+
+        await scheduler.run_once()
+
+        assert scheduler.progress["total"] == 0
+        assert scheduler.progress["completed"] == 0
+        assert scheduler.progress["results"] == []
+
+    def test_queue_marks_backup_as_active(self):
+        """Test that a queued backup is reported as active immediately."""
+        scheduler = BackupScheduler(Mock(), 60)
+
+        assert scheduler.active is False
+
+        scheduler.queue()
+
+        assert scheduler.queued is True
+        assert scheduler.active is True
+
+    @pytest.mark.asyncio
+    async def test_run_once_clears_queue(self):
+        """Test that starting a queued backup clears the queue flag."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(backup, 60)
+        scheduler.queue()
+
+        await scheduler.run_once()
+
+        assert scheduler.queued is False
+        assert scheduler.active is False
 
     @pytest.mark.asyncio
     async def test_run_once_serialises_concurrent_calls(self):
@@ -148,6 +266,35 @@ class TestBackupScheduler:
         assert scheduler.run_count == 0
         assert scheduler.last_run is None
         assert scheduler.last_backed_up == []
+
+    @pytest.mark.asyncio
+    async def test_run_device_reports_progress(self):
+        """Test that a manual device backup reports progress."""
+        backup = Mock()
+        backup.backup_device.return_value = True
+        scheduler = BackupScheduler(backup, 60)
+
+        await scheduler.run_device("192.168.1.10")
+
+        progress = scheduler.progress
+        assert progress["total"] == 1
+        assert progress["completed"] == 1
+        assert progress["percent"] == 100
+        assert progress["current"] is None
+        assert progress["results"] == [{"ip_address": "192.168.1.10", "success": True}]
+
+    @pytest.mark.asyncio
+    async def test_run_device_reports_failure_progress(self):
+        """Test that a failed manual device backup is reported."""
+        backup = Mock()
+        backup.backup_device.return_value = False
+        scheduler = BackupScheduler(backup, 60)
+
+        await scheduler.run_device("192.168.1.10")
+
+        assert scheduler.progress["results"] == [
+            {"ip_address": "192.168.1.10", "success": False}
+        ]
 
     @pytest.mark.asyncio
     async def test_run_device_serialises_with_run_once(self):
