@@ -75,6 +75,23 @@ def _scheduler_status(scheduler: BackupScheduler, store: BackupStore) -> dict:
     }
 
 
+def _register_device_backup_route(
+    app: FastAPI, store: BackupStore, scheduler: BackupScheduler
+) -> None:
+    """Register the manual per-device backup route."""
+
+    @app.post("/devices/{ip_address}/backup")
+    async def backup_device(ip_address: str):
+        """Back up a single device and return to its detail page."""
+        if not store.by_device(ip_address):
+            raise HTTPException(status_code=404, detail="Device not found")
+        success = await scheduler.run_device(ip_address)
+        result = "backup_done" if success else "backup_failed"
+        return RedirectResponse(
+            url=f"/devices/{ip_address}?{result}=1", status_code=303
+        )
+
+
 def _register_routes(
     app: FastAPI, store: BackupStore, scheduler: BackupScheduler
 ) -> None:
@@ -109,6 +126,8 @@ def _register_routes(
                 "backups": backups,
             },
         )
+
+    _register_device_backup_route(app, store, scheduler)
 
     @app.get("/backups/{doc_id}", response_class=HTMLResponse)
     async def backup(request: Request, doc_id: int):

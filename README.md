@@ -80,7 +80,9 @@ The server has no authentication. Only expose it on networks you trust.
 * `/backups/<id>/download` - download a backup as JSON.
 * `/health` - server and scheduler status as JSON.
 
-A **Run backup now** button is available on every page.
+A **Run backup now** button is available on every page. The device detail page
+also has a **Back up this device** button to back up just that device without
+waiting for the next scheduled run.
 
 ## One-shot backup
 

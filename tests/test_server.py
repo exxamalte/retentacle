@@ -151,6 +151,73 @@ class TestServer:
         assert response.status_code == 200
         assert "SNSW-001P16EU" in response.text
 
+    def test_device_page_has_manual_backup_button(self):
+        """Test the device page offers a manual backup action."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                response = client.get("/devices/192.168.1.10")
+
+        assert response.status_code == 200
+        assert 'action="/devices/192.168.1.10/backup"' in response.text
+        assert "Back up this device" in response.text
+
+    def test_manual_device_backup(self):
+        """Test backing up a single device from its detail page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_device = AsyncMock(return_value=True)
+                response = client.post(
+                    "/devices/192.168.1.10/backup", follow_redirects=False
+                )
+
+                scheduler.run_device.assert_awaited_once_with("192.168.1.10")
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/devices/192.168.1.10?backup_done=1"
+
+    def test_manual_device_backup_failure(self):
+        """Test a failed single-device backup redirects with an error flag."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_device = AsyncMock(return_value=False)
+                response = client.post(
+                    "/devices/192.168.1.10/backup", follow_redirects=False
+                )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/devices/192.168.1.10?backup_failed=1"
+
+    def test_manual_device_backup_unknown_device(self):
+        """Test that an unknown device cannot be backed up manually."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_device = AsyncMock(return_value=True)
+                response = client.post(
+                    "/devices/192.168.1.99/backup", follow_redirects=False
+                )
+
+                scheduler.run_device.assert_not_awaited()
+
+        assert response.status_code == 404
+
+    def test_device_page_shows_manual_backup_result(self):
+        """Test the device page shows manual backup results."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                done = client.get("/devices/192.168.1.10?backup_done=1")
+                failed = client.get("/devices/192.168.1.10?backup_failed=1")
+
+        assert "Backup completed for Kitchen" in done.text
+        assert "Backup failed" in failed.text
+
     def test_legacy_records_render(self):
         """Test that records without generation or device info still render."""
         with tempfile.TemporaryDirectory() as tmpdir:

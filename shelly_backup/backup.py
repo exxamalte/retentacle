@@ -34,15 +34,18 @@ class Backup:
                 "No IP addresses of Shelly devices specified. Unable to continue."
             )
             return []
-        backed_up: list[str] = []
-        for ip_address in ip_addresses:
-            try:
-                if self._device_backup(ip_address):
-                    backed_up.append(ip_address)
-            except Exception:  # noqa: BLE001
-                # A single failing device must not stop the remaining backups.
-                _LOGGER.exception("Unexpected error backing up %s", ip_address)
-        return backed_up
+        return [
+            ip_address for ip_address in ip_addresses if self.backup_device(ip_address)
+        ]
+
+    def backup_device(self, ip_address: str) -> bool:
+        """Back up a single device and return whether it succeeded."""
+        try:
+            return self._device_backup(ip_address)
+        except Exception:  # noqa: BLE001
+            # A single failing device must not stop the remaining backups.
+            _LOGGER.exception("Unexpected error backing up %s", ip_address)
+            return False
 
     def _device_backup(self, ip_address: str) -> bool:
         """Create device backup from Shelly under provided IP address."""

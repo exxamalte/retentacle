@@ -69,6 +69,27 @@ class TestBackup:
             assert backup.execute() == ["192.168.1.2"]
             assert mock_device_backup.call_count == 2
 
+    def test_backup_device_success(self):
+        """Test backing up a single device."""
+        backup = Backup(Configuration(None, None, None))
+        with patch.object(
+            backup, "_device_backup", return_value=True
+        ) as mock_device_backup:
+            assert backup.backup_device("192.168.1.1") is True
+            mock_device_backup.assert_called_once_with("192.168.1.1")
+
+    def test_backup_device_returns_false_on_failure(self):
+        """Test that a failed single-device backup returns False."""
+        backup = Backup(Configuration(None, None, None))
+        with patch.object(backup, "_device_backup", return_value=False):
+            assert backup.backup_device("192.168.1.1") is False
+
+    def test_backup_device_handles_unexpected_error(self):
+        """Test that an unexpected single-device error returns False."""
+        backup = Backup(Configuration(None, None, None))
+        with patch.object(backup, "_device_backup", side_effect=RuntimeError("boom")):
+            assert backup.backup_device("192.168.1.1") is False
+
     def test_execute_with_discovery(self):
         """Test execute discovers devices when none are configured."""
         config = Configuration(None, None, None, discover=True)

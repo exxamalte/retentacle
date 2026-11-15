@@ -32,6 +32,10 @@ class SlowBackup:
             self.active -= 1
         return []
 
+    def backup_device(self, ip_address):
+        """Run a slow fake single-device backup."""
+        return bool(self.execute())
+
 
 class TestBackupScheduler:
     """Tests for BackupScheduler."""
@@ -116,6 +120,42 @@ class TestBackupScheduler:
         scheduler = BackupScheduler(backup, 60)
 
         await asyncio.gather(scheduler.run_once(), scheduler.run_once())
+
+        assert backup.calls == 2
+        assert backup.max_active == 1
+
+    @pytest.mark.asyncio
+    @patch("shelly_backup.scheduler.asyncio.to_thread", new_callable=AsyncMock)
+    async def test_run_device_uses_to_thread(self, mock_to_thread):
+        """Test that a single-device backup runs outside the event loop."""
+        mock_to_thread.return_value = True
+        backup = Mock()
+        scheduler = BackupScheduler(backup, 60)
+
+        assert await scheduler.run_device("192.168.1.10") is True
+
+        mock_to_thread.assert_awaited_once_with(backup.backup_device, "192.168.1.10")
+
+    @pytest.mark.asyncio
+    async def test_run_device_does_not_change_scheduler_status(self):
+        """Test that a manual device backup does not affect scheduling."""
+        backup = Mock()
+        backup.backup_device.return_value = True
+        scheduler = BackupScheduler(backup, 60)
+
+        assert await scheduler.run_device("192.168.1.10") is True
+
+        assert scheduler.run_count == 0
+        assert scheduler.last_run is None
+        assert scheduler.last_backed_up == []
+
+    @pytest.mark.asyncio
+    async def test_run_device_serialises_with_run_once(self):
+        """Test that manual and scheduled backups do not run in parallel."""
+        backup = SlowBackup()
+        scheduler = BackupScheduler(backup, 60)
+
+        await asyncio.gather(scheduler.run_once(), scheduler.run_device("192.168.1.10"))
 
         assert backup.calls == 2
         assert backup.max_active == 1

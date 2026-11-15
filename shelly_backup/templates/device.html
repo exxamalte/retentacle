@@ -7,6 +7,16 @@
     <a href="/">Devices</a> / <span>{{ display_name }}</span>
   </p>
 
+  {% if request.query_params.get('backup_done') %}
+    <div class="notice" role="status">
+      Backup completed for {{ display_name }}.
+    </div>
+  {% elif request.query_params.get('backup_failed') %}
+    <div class="alert" role="alert">
+      <strong>Backup failed</strong> for {{ display_name }}. Check the server log for details.
+    </div>
+  {% endif %}
+
   <div class="page-header">
     <div>
       <h1>{{ display_name }}</h1>
@@ -15,7 +25,12 @@
         &middot; {{ backups|length }} backup{% if backups|length != 1 %}s{% endif %}
       </p>
     </div>
-    <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
+    <div class="header-actions">
+      <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
+      <form method="post" action="/devices/{{ ip_address }}/backup">
+        <button class="button primary" type="submit">Back up this device</button>
+      </form>
+    </div>
   </div>
 
   <section class="card" aria-label="Backups for {{ display_name }}">

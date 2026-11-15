@@ -85,6 +85,11 @@ class BackupScheduler:
                 self.last_run = datetime.now(UTC)
                 self.run_count += 1
 
+    async def run_device(self, ip_address: str) -> bool:
+        """Back up a single device without changing the scheduler status."""
+        async with self._lock:
+            return await asyncio.to_thread(self._backup.backup_device, ip_address)
+
     async def _run_loop(self) -> None:
         """Run backups until the scheduler is stopped."""
         while True:
