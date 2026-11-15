@@ -4,6 +4,7 @@ import tempfile
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
+import pytest
 
 from shelly_backup.configuration import Configuration
 from shelly_backup.server import _format_interval, create_app, run_server
@@ -426,7 +427,17 @@ class TestServer:
         assert response.status_code == 303
         assert response.headers["location"] == "/devices/192.168.1.10?backup_started=1"
 
-    def test_trigger_backup_rejects_external_redirect(self):
+    @pytest.mark.parametrize(
+        "redirect",
+        [
+            "https://example.com",
+            "//example.com",
+            "/\\example.com",
+            "devices/192.168.1.10",
+            "",
+        ],
+    )
+    def test_trigger_backup_rejects_unsafe_redirect(self, redirect):
         """Test that the redirect target cannot leave the application."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
@@ -434,12 +445,27 @@ class TestServer:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post(
-                    "/backup?redirect=https://example.com",
+                    f"/backup?redirect={redirect}",
                     follow_redirects=False,
                 )
 
         assert response.status_code == 303
         assert response.headers["location"] == "/?backup_started=1"
+
+    def test_trigger_backup_drops_redirect_query(self):
+        """Test that only the redirect path is used."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post(
+                    "/backup?redirect=/devices/192.168.1.10?foo=bar",
+                    follow_redirects=False,
+                )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/devices/192.168.1.10?backup_started=1"
 
     def test_trigger_backup_uses_registered_devices(self):
         """Test that the backup button backs up all registered devices."""

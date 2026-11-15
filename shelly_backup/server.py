@@ -118,9 +118,16 @@ def _register_backup_routes(
         scheduler.queue()
         background_tasks.add_task(scheduler.run_once, _registered_ip_addresses(store))
         parsed_redirect = URL(redirect)
+        path = parsed_redirect.path
         target = (
-            redirect
-            if parsed_redirect.is_relative_url and parsed_redirect.path.startswith("/")
+            path
+            if not parsed_redirect.scheme
+            and not parsed_redirect.netloc
+            and path.startswith("/")
+            and not path.startswith("//")
+            and "\\" not in path
+            and "\r" not in path
+            and "\n" not in path
             else "/"
         )
         return RedirectResponse(url=f"{target}?backup_started=1", status_code=303)
