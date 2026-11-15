@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -87,8 +88,9 @@ def _register_device_backup_route(
             raise HTTPException(status_code=404, detail="Device not found")
         success = await scheduler.run_device(ip_address)
         result = "backup_done" if success else "backup_failed"
+        safe_ip_address = quote(ip_address, safe="")
         return RedirectResponse(
-            url=f"/devices/{ip_address}?{result}=1", status_code=303
+            url=f"/devices/{safe_ip_address}?{result}=1", status_code=303
         )
 
 
