@@ -5,7 +5,7 @@ a = Analysis(
     ['shelly_backup/cli.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('shelly_backup/templates', 'shelly_backup/templates')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

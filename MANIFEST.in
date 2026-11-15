@@ -1,2 +1,3 @@
 prune tests
 recursive-include shelly_backup/templates *.html
+include configuration.example.yaml
