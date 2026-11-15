@@ -1,0 +1,21 @@
+# Example Shelly Backup configuration.
+#
+# Copy this file, adjust the values, and start the server with:
+#   shelly-backup --configuration configuration.yaml
+
+ip_addresses:
+  - 192.168.10.20
+  - 192.168.10.21
+
+target_folder: backup_folder
+
+# Interval between automatic backups. Accepts values such as 30m, 1h, or 1d.
+# Use 0 to disable automatic backups.
+interval: 1h
+
+# Web server bind address and port.
+host: 127.0.0.1
+port: 8080
+
+# Alternatively, discover devices via mDNS instead of listing IP addresses:
+# discover: true

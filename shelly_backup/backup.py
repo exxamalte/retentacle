@@ -4,10 +4,10 @@ from datetime import UTC, datetime
 import logging
 
 import httpx
-from tinydb import TinyDB
 
 from .configuration import Configuration
 from .discovery import discover_shelly_devices
+from .storage import BackupStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -16,13 +16,15 @@ class Backup:
     """Shelly Backup."""
 
     _configuration: Configuration
+    _backup_store: BackupStore
 
-    def __init__(self, configuration: Configuration):
+    def __init__(self, configuration: Configuration, store: BackupStore | None = None):
         """Initialise backup."""
         self._configuration = configuration
+        self._backup_store = store or BackupStore(configuration.database_path())
 
-    def execute(self):
-        """Run device backup."""
+    def execute(self) -> list[str]:
+        """Run device backup and return the IP addresses backed up."""
         ip_addresses = self._configuration.ip_addresses()
         if not ip_addresses and self._configuration.discover():
             _LOGGER.info("Discovering Shelly devices via mDNS...")
@@ -31,11 +33,21 @@ class Backup:
             _LOGGER.warning(
                 "No IP addresses of Shelly devices specified. Unable to continue."
             )
-            return
-        for ip_address in ip_addresses:
-            self._device_backup(ip_address)
+            return []
+        return [
+            ip_address for ip_address in ip_addresses if self.backup_device(ip_address)
+        ]
 
-    def _device_backup(self, ip_address: str):
+    def backup_device(self, ip_address: str) -> bool:
+        """Back up a single device and return whether it succeeded."""
+        try:
+            return self._device_backup(ip_address)
+        except Exception:  # noqa: BLE001
+            # A single failing device must not stop the remaining backups.
+            _LOGGER.exception("Unexpected error backing up %s", ip_address)
+            return False
+
+    def _device_backup(self, ip_address: str) -> bool:
         """Create device backup from Shelly under provided IP address."""
         try:
             # Get some basic information from the device to determine which generation
@@ -49,22 +61,27 @@ class Backup:
                 _LOGGER.info("Device identified as generation %s", shelly_gen)
                 match shelly_gen:
                     case 1:
-                        self._generation_1(ip_address, response_json)
+                        return self._generation_1(ip_address, response_json)
                     case 2 | 3:
-                        self._generation_2(ip_address, response_json)
+                        return self._generation_2(ip_address, response_json)
                     case _:
                         # Unknown generation.
                         _LOGGER.warning("Unknown generation: %s", shelly_gen)
-            else:
-                _LOGGER.warning(
-                    "Unable to get basic device information from %s, response code %s",
-                    url,
-                    response.status_code,
-                )
+                        return False
+            _LOGGER.warning(
+                "Unable to get basic device information from %s, response code %s",
+                url,
+                response.status_code,
+            )
+            return False
         except httpx.HTTPError as exc:
             _LOGGER.warning("HTTP Exception for %s - %s", exc.request.url, exc)
+            return False
+        except ValueError as exc:
+            _LOGGER.warning("Invalid response from %s - %s", ip_address, exc)
+            return False
 
-    def _generation_1(self, ip_address: str, basic_device_information: dict):
+    def _generation_1(self, ip_address: str, basic_device_information: dict) -> bool:
         """Backup generation 1 device."""
         urls: dict = {
             "settings": f"http://{ip_address}/settings",
@@ -72,9 +89,9 @@ class Backup:
             "status": f"http://{ip_address}/status",
         }
         configuration: dict = self._device_configuration(urls)
-        self._store(ip_address, configuration)
+        return self._store(ip_address, configuration, basic_device_information)
 
-    def _generation_2(self, ip_address: str, basic_device_information: dict):
+    def _generation_2(self, ip_address: str, basic_device_information: dict) -> bool:
         """Backup generation 2 device."""
         urls: dict = {
             "configuration": f"http://{ip_address}/rpc/Shelly.GetConfig",
@@ -82,7 +99,7 @@ class Backup:
             "status": f"http://{ip_address}/rpc/Shelly.GetStatus",
         }
         configuration: dict = self._device_configuration(urls)
-        self._store(ip_address, configuration)
+        return self._store(ip_address, configuration, basic_device_information)
 
     def _device_configuration(self, urls: dict) -> dict:
         """Fetch device configuration from the provided list of URLs."""
@@ -100,18 +117,27 @@ class Backup:
                 )
         return result
 
-    def _store(self, ip_address: str, device_settings: dict):
-        """Store device settings."""
-        target_folder = self._configuration.target_folder()
-        target_folder.mkdir(parents=True, exist_ok=True)
-        db_path = target_folder / "shelly_backup.json"
-        db = TinyDB(db_path)
-        db.insert(
-            {
-                "ip_address": ip_address,
-                "timestamp": datetime.now(UTC).isoformat(),
-                "settings": device_settings,
-            }
+    def _store(
+        self,
+        ip_address: str,
+        device_settings: dict,
+        device_info: dict | None = None,
+    ) -> bool:
+        """Store device settings and return whether storing succeeded."""
+        device_info = device_info or {}
+        record = {
+            "ip_address": ip_address,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "generation": device_info.get("gen", 1),
+            "device_info": device_info,
+            "settings": device_settings,
+        }
+        try:
+            self._backup_store.add(record)
+        except OSError as exc:
+            _LOGGER.warning("Unable to store backup for %s - %s", ip_address, exc)
+            return False
+        _LOGGER.info(
+            "Configuration stored for %s: %s", ip_address, self._backup_store.path
         )
-        db.close()
-        _LOGGER.info("Configuration stored: %s", db_path)
+        return True
