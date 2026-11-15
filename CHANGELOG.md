@@ -4,6 +4,7 @@
 * Run as a long-running server with scheduled backups.
 * Add a web UI for browsing backups per device and viewing raw backup data.
 * Add a manual per-device backup action on the device detail page.
+* Show configured device names for generation 1 devices.
 * Add `--interval`, `--host`, and `--port` options.
 * Add `--once` for the original single-run backup behaviour.
 * Add `python -m shelly_backup` support.

@@ -162,6 +162,30 @@ class TestServer:
         assert 'action="/devices/192.168.1.10/backup"' in response.text
         assert "Back up this device" in response.text
 
+    def test_pages_use_generation_1_configured_name(self):
+        """Test that generation 1 devices show their configured name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[
+                    _record(
+                        ip_address="10.10.4.130",
+                        generation=1,
+                        device_info={"gen": 1, "type": "SHSW-25"},
+                        settings={"settings": {"name": "Dining Room"}},
+                    )
+                ],
+            )
+            with TestClient(app) as client:
+                index_response = client.get("/")
+                device_response = client.get("/devices/10.10.4.130")
+                doc_id = app.state.store.all()[0]["doc_id"]
+                backup_response = client.get(f"/backups/{doc_id}")
+
+        assert "Dining Room" in index_response.text
+        assert "Dining Room" in device_response.text
+        assert "Dining Room" in backup_response.text
+
     def test_manual_device_backup(self):
         """Test backing up a single device from its detail page."""
         with tempfile.TemporaryDirectory() as tmpdir:

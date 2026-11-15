@@ -11,6 +11,7 @@ def _record(
     ip_address="192.168.1.10",
     timestamp="2026-11-15T10:00:00+00:00",
     device_info=None,
+    settings=None,
 ):
     """Create a backup record for tests."""
     return {
@@ -18,7 +19,7 @@ def _record(
         "timestamp": timestamp,
         "generation": (device_info or {}).get("gen", 1),
         "device_info": device_info or {},
-        "settings": {"test": True},
+        "settings": settings if settings is not None else {"test": True},
     }
 
 
@@ -221,6 +222,63 @@ class TestBackupStore:
                 "192.168.1.11": "SHSW-1",
                 "192.168.1.12": "192.168.1.12",
             }
+
+    def test_devices_uses_generation_1_configured_name(self):
+        """Test that generation 1 uses the name from its settings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store.add(
+                _record(
+                    ip_address="10.10.4.130",
+                    device_info={"gen": 1, "type": "SHSW-25"},
+                    settings={
+                        "settings": {
+                            "name": "Dining Room",
+                            "device": {"type": "SHSW-25"},
+                        }
+                    },
+                )
+            )
+
+            devices = store.devices()
+
+            assert devices[0]["display_name"] == "Dining Room"
+
+    def test_devices_uses_generation_2_settings_name_as_fallback(self):
+        """Test that generation 2/3 can fall back to the configured name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store.add(
+                _record(
+                    ip_address="192.168.1.10",
+                    device_info={"gen": 2, "model": "SNSW-001X16EU"},
+                    settings={
+                        "configuration": {"sys": {"device": {"name": "Living Room"}}}
+                    },
+                )
+            )
+
+            devices = store.devices()
+
+            assert devices[0]["display_name"] == "Living Room"
+
+    def test_devices_prefers_device_info_name(self):
+        """Test that the device info name wins over the settings name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store.add(
+                _record(
+                    ip_address="192.168.1.10",
+                    device_info={"gen": 2, "name": "Kitchen"},
+                    settings={
+                        "configuration": {"sys": {"device": {"name": "Old Name"}}}
+                    },
+                )
+            )
+
+            devices = store.devices()
+
+            assert devices[0]["display_name"] == "Kitchen"
 
     def test_devices_ignores_records_without_ip_address(self):
         """Test that records without an IP address are not grouped."""
