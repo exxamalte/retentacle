@@ -231,8 +231,7 @@ class TestServer:
         assert response.status_code == 200
         assert 'title="Included in automatic backups">Automatic</span>' in response.text
         assert (
-            'title="Not included in automatic backups">Manual only</span>'
-            in response.text
+            'title="Not included in automatic backups">Manual</span>' in response.text
         )
         assert 'title="A backup was taken recently">Recent</span>' in response.text
         assert 'title="No recent backup">Stale</span>' in response.text
