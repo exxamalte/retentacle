@@ -41,10 +41,10 @@ class TestRetentionPolicy:
     def test_as_dict(self):
         """Test serialising a policy for persistence."""
         assert DEFAULT_RETENTION.as_dict() == {
-            "monthly": 12,
+            "monthly": 6,
             "weekly": 4,
             "daily": 7,
-            "hourly": 24,
+            "hourly": 4,
         }
 
     def test_policy_from_missing_settings(self):
@@ -84,7 +84,7 @@ class TestRetentionPolicy:
             }
         )
 
-        assert policy == RetentionPolicy(monthly=6, weekly=4, daily=7, hourly=24)
+        assert policy == RetentionPolicy(monthly=6, weekly=4, daily=7, hourly=4)
 
 
 class TestSelectExpiredDocIds:
