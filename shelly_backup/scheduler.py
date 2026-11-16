@@ -1,6 +1,7 @@
 """Periodic backup scheduler."""
 
 import asyncio
+from collections.abc import Callable
 import contextlib
 from datetime import UTC, datetime, timedelta
 import logging
@@ -14,10 +15,17 @@ _LOGGER = logging.getLogger(__name__)
 class BackupScheduler:
     """Run backups periodically in the background."""
 
-    def __init__(self, backup: Backup, interval: float):
+    def __init__(
+        self,
+        backup: Backup,
+        interval: float,
+        *,
+        ip_addresses_provider: Callable[[], list[str] | None] | None = None,
+    ):
         """Initialise the scheduler."""
         self._backup = backup
         self._interval = float(interval)
+        self._ip_addresses_provider = ip_addresses_provider
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._progress_lock = threading.Lock()
@@ -150,6 +158,8 @@ class BackupScheduler:
             self.started_at = datetime.now(UTC)
             self._on_start(0)
             try:
+                if ip_addresses is None and self._ip_addresses_provider is not None:
+                    ip_addresses = self._ip_addresses_provider()
                 self.last_backed_up = await asyncio.to_thread(
                     self._backup.execute,
                     ip_addresses,

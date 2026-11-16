@@ -8,6 +8,7 @@
 * Add a live backup progress bar and automatic page refresh when a run finishes.
 * Show configured device names for generation 1 devices.
 * Add a settings page for changing the backup interval at runtime.
+* Add device IP address management to the settings page.
 * Show the actual last backup time on the overview instead of the server start time.
 * Add `--interval`, `--host`, and `--port` options.
 * Add `--once` for the original single-run backup behaviour.

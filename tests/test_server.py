@@ -9,9 +9,12 @@ import pytest
 
 from shelly_backup.configuration import Configuration
 from shelly_backup.server import (
+    _effective_ip_addresses,
     _format_interval,
     _format_interval_value,
     _format_timestamp,
+    _parse_ip_addresses,
+    _saved_ip_addresses,
     create_app,
     run_server,
 )
@@ -67,6 +70,56 @@ class TestFormatInterval:
         assert _format_interval_value(3600) == "1h"
         assert _format_interval_value(5400) == "90m"
         assert _format_interval_value(86400) == "1d"
+
+
+class TestIpAddresses:
+    """Tests for the device IP address helpers."""
+
+    def test_parse_ip_addresses(self):
+        """Test parsing one or more IP addresses."""
+        assert _parse_ip_addresses("192.168.1.10") == ["192.168.1.10"]
+        assert _parse_ip_addresses("192.168.1.10\n192.168.1.11, 2001:0db8::0001") == [
+            "192.168.1.10",
+            "192.168.1.11",
+            "2001:db8::1",
+        ]
+
+    def test_parse_ip_addresses_rejects_empty_input(self):
+        """Test that empty input is rejected."""
+        with pytest.raises(ValueError, match="at least one"):
+            _parse_ip_addresses("  \n ")
+
+    def test_parse_ip_addresses_rejects_invalid_values(self):
+        """Test that invalid IP addresses are rejected."""
+        with pytest.raises(ValueError, match="not-an-ip"):
+            _parse_ip_addresses("192.168.1.10\nnot-an-ip")
+
+    def test_saved_ip_addresses_ignores_invalid_values(self):
+        """Test that invalid saved values are ignored."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Configuration(None, tmpdir, None).database_path())
+            store.save_settings(
+                {"ip_addresses": ["192.168.1.10", "not-an-ip", "2001:0db8::1"]}
+            )
+
+            assert _saved_ip_addresses(store) == ["192.168.1.10", "2001:db8::1"]
+
+    def test_effective_ip_addresses_prefers_saved_devices(self):
+        """Test that devices saved in settings override the configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration("192.168.1.1", tmpdir, None)
+            store = BackupStore(config.database_path())
+            store.save_settings({"ip_addresses": ["10.0.0.1"]})
+
+            assert _effective_ip_addresses(config, store) == ["10.0.0.1"]
+
+    def test_effective_ip_addresses_falls_back_to_configuration(self):
+        """Test that configured devices are used without saved devices."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration("192.168.1.1", tmpdir, None)
+            store = BackupStore(config.database_path())
+
+            assert _effective_ip_addresses(config, store) == ["192.168.1.1"]
 
 
 class TestServer:
@@ -588,6 +641,143 @@ class TestServer:
 
         assert response.status_code == 200
         assert "Settings saved" in response.text
+
+    def test_settings_page_shows_devices_section(self):
+        """Test that the settings page offers device management."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/settings")
+
+        assert response.status_code == 200
+        assert 'action="/settings/devices"' in response.text
+        assert 'name="ip_addresses"' in response.text
+        assert "Add devices" in response.text
+        assert "No devices added yet" in response.text
+
+    def test_settings_page_lists_saved_devices(self):
+        """Test that saved devices are listed with a remove action."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["192.168.1.10", "2001:db8::1"]})
+            with TestClient(app) as client:
+                response = client.get("/settings")
+
+        assert response.status_code == 200
+        assert "192.168.1.10" in response.text
+        assert "2001:db8::1" in response.text
+        assert 'action="/settings/devices/remove"' in response.text
+
+    def test_add_devices(self):
+        """Test adding device IP addresses via the settings page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/devices",
+                    data={"ip_addresses": "192.168.1.10\n2001:0db8::0001"},
+                    follow_redirects=False,
+                )
+
+            assert response.status_code == 303
+            assert response.headers["location"] == "/settings?saved=1"
+            assert store.get_settings() == {
+                "ip_addresses": ["192.168.1.10", "2001:db8::1"]
+            }
+
+    def test_add_devices_preserves_existing_settings(self):
+        """Test that adding devices keeps the interval and future settings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"interval": 3600, "future_setting": "keep me"})
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/devices",
+                    data={"ip_addresses": "192.168.1.10"},
+                    follow_redirects=False,
+                )
+
+            assert response.status_code == 303
+            assert store.get_settings() == {
+                "interval": 3600,
+                "future_setting": "keep me",
+                "ip_addresses": ["192.168.1.10"],
+            }
+
+    def test_add_devices_deduplicates(self):
+        """Test that adding an existing device does not create duplicates."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["192.168.1.10"]})
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/devices",
+                    data={"ip_addresses": "192.168.1.10\n192.168.1.11"},
+                    follow_redirects=False,
+                )
+
+            assert response.status_code == 303
+            assert store.get_settings() == {
+                "ip_addresses": ["192.168.1.10", "192.168.1.11"]
+            }
+
+    def test_add_devices_rejects_invalid_addresses(self):
+        """Test that invalid device addresses are rejected without saving."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/devices",
+                    data={"ip_addresses": "192.168.1.10\nnot-an-ip"},
+                    follow_redirects=False,
+                )
+
+            assert response.status_code == 400
+            assert "Could not save settings" in response.text
+            assert "valid IPv4 or IPv6" in response.text
+            assert "192.168.1.10\nnot-an-ip" in response.text
+            assert store.get_settings() == {}
+
+    def test_remove_device(self):
+        """Test removing a device IP address."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings(
+                {
+                    "interval": 3600,
+                    "ip_addresses": ["192.168.1.10", "192.168.1.11"],
+                }
+            )
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/devices/remove",
+                    data={"ip_address": "192.168.1.10"},
+                    follow_redirects=False,
+                )
+
+            assert response.status_code == 303
+            assert response.headers["location"] == "/settings?saved=1"
+            assert store.get_settings() == {
+                "interval": 3600,
+                "ip_addresses": ["192.168.1.11"],
+            }
+
+    def test_trigger_backup_uses_saved_devices(self):
+        """Test that saved devices override registered devices for a manual run."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[_record(ip_address="192.168.1.10")],
+            )
+            store.save_settings({"ip_addresses": ["10.0.0.1"]})
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post("/backup", follow_redirects=False)
+
+                scheduler.run_once.assert_awaited_once_with(["10.0.0.1"])
+
+        assert response.status_code == 303
 
     def test_save_settings(self):
         """Test saving a new backup interval."""
