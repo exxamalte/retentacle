@@ -5,14 +5,15 @@
     <div>
       <h1>Settings</h1>
       <p class="subtitle">
-        Configure automatic backups and other server behaviour.
+        Configure the backup schedule, retention, and devices.
       </p>
     </div>
   </div>
 
   {% if saved %}
     <div class="notice" role="status">
-      Settings saved. Changes take effect immediately.
+      Settings saved. The updated schedule takes effect immediately; retention
+      is applied after the next successful backup.
     </div>
   {% endif %}
 
@@ -120,6 +121,91 @@
       <p class="stat-label">Next run</p>
       <p class="stat-value">{{ next_run|format_timestamp }}</p>
     </div>
+  </section>
+
+  <section class="card settings-card" aria-label="Backup retention">
+    <h2>Backup retention</h2>
+    <p class="field-help">
+      Retention runs after each successful backup and keeps the newest backup
+      from every selected period. A single backup can count towards several
+      periods. Set a period to <span class="mono">0</span> to keep no backups
+      for it.
+    </p>
+    <form method="post" action="/settings/retention">
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="retention_monthly">Monthly backups</label>
+          <input
+            class="input"
+            id="retention_monthly"
+            name="retention_monthly"
+            type="number"
+            min="0"
+            max="1000"
+            step="1"
+            value="{{ retention_values.monthly }}"
+            required
+          >
+          <p class="field-help">
+            Keep one backup per month for this many months.
+          </p>
+        </div>
+        <div class="form-field">
+          <label for="retention_weekly">Weekly backups</label>
+          <input
+            class="input"
+            id="retention_weekly"
+            name="retention_weekly"
+            type="number"
+            min="0"
+            max="1000"
+            step="1"
+            value="{{ retention_values.weekly }}"
+            required
+          >
+          <p class="field-help">
+            Keep one backup per week for this many weeks.
+          </p>
+        </div>
+        <div class="form-field">
+          <label for="retention_daily">Daily backups</label>
+          <input
+            class="input"
+            id="retention_daily"
+            name="retention_daily"
+            type="number"
+            min="0"
+            max="1000"
+            step="1"
+            value="{{ retention_values.daily }}"
+            required
+          >
+          <p class="field-help">
+            Keep one backup per day for this many days.
+          </p>
+        </div>
+        <div class="form-field">
+          <label for="retention_hourly">Hourly backups</label>
+          <input
+            class="input"
+            id="retention_hourly"
+            name="retention_hourly"
+            type="number"
+            min="0"
+            max="1000"
+            step="1"
+            value="{{ retention_values.hourly }}"
+            required
+          >
+          <p class="field-help">
+            Keep one backup per hour for this many hours.
+          </p>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Save retention</button>
+      </div>
+    </form>
   </section>
 
   <section class="card settings-card" aria-label="Devices">

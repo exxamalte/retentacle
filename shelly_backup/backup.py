@@ -8,6 +8,7 @@ import httpx
 
 from .configuration import Configuration
 from .discovery import discover_shelly_devices
+from .retention import retention_policy_from_settings
 from .storage import BackupStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -156,7 +157,20 @@ class Backup:
         except OSError as exc:
             _LOGGER.warning("Unable to store backup for %s - %s", ip_address, exc)
             return False
+        self._apply_retention(ip_address)
         _LOGGER.info(
             "Configuration stored for %s: %s", ip_address, self._backup_store.path
         )
         return True
+
+    def _apply_retention(self, ip_address: str) -> None:
+        """Apply the configured retention policy to a device's backups."""
+        try:
+            policy = retention_policy_from_settings(self._backup_store.get_settings())
+            removed = self._backup_store.prune(ip_address, policy)
+        except Exception:  # noqa: BLE001
+            # Retention must never make a successful backup fail.
+            _LOGGER.exception("Unable to apply backup retention for %s", ip_address)
+            return
+        if isinstance(removed, int) and removed:
+            _LOGGER.info("Removed %s old backups for %s", removed, ip_address)

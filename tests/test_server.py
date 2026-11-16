@@ -662,6 +662,26 @@ class TestServer:
         assert response.status_code == 200
         assert "Settings saved" in response.text
 
+    def test_settings_page_shows_retention_section(self):
+        """Test that the settings page shows the default retention policy."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/settings")
+
+        assert response.status_code == 200
+        assert 'action="/settings/retention"' in response.text
+        assert response.text.count('name="retention_') == 4
+        assert 'id="retention_monthly"' in response.text
+        assert 'id="retention_weekly"' in response.text
+        assert 'id="retention_daily"' in response.text
+        assert 'id="retention_hourly"' in response.text
+        assert "Save retention" in response.text
+        assert 'value="12"' in response.text
+        assert 'value="4"' in response.text
+        assert 'value="7"' in response.text
+        assert 'value="24"' in response.text
+
     def test_settings_page_shows_devices_section(self):
         """Test that the settings page offers device management."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1014,6 +1034,152 @@ class TestServer:
                 scheduler.run_once.assert_awaited_once_with(["10.0.0.1"])
 
         assert response.status_code == 303
+
+    def test_save_retention(self):
+        """Test saving a backup retention policy."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/retention",
+                    data={
+                        "retention_monthly": "6",
+                        "retention_weekly": "3",
+                        "retention_daily": "5",
+                        "retention_hourly": "2",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/settings?saved=1"
+                assert store.get_settings() == {
+                    "retention": {
+                        "monthly": 6,
+                        "weekly": 3,
+                        "daily": 5,
+                        "hourly": 2,
+                    }
+                }
+
+    def test_save_retention_preserves_existing_settings(self):
+        """Test that saving retention keeps the schedule and devices."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings(
+                {
+                    "interval": 3600,
+                    "ip_addresses": ["192.168.1.10"],
+                    "future_setting": "keep me",
+                }
+            )
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/retention",
+                    data={
+                        "retention_monthly": "12",
+                        "retention_weekly": "4",
+                        "retention_daily": "7",
+                        "retention_hourly": "24",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                settings = store.get_settings()
+                assert settings["interval"] == 3600
+                assert settings["ip_addresses"] == ["192.168.1.10"]
+                assert settings["future_setting"] == "keep me"
+                assert settings["retention"] == {
+                    "monthly": 12,
+                    "weekly": 4,
+                    "daily": 7,
+                    "hourly": 24,
+                }
+
+    def test_save_retention_rejects_negative_values(self):
+        """Test that negative retention values are rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/retention",
+                    data={
+                        "retention_monthly": "-1",
+                        "retention_weekly": "4",
+                        "retention_daily": "7",
+                        "retention_hourly": "24",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 400
+                assert "Retention periods cannot be negative." in response.text
+                assert 'value="-1"' in response.text
+                assert store.get_settings() == {}
+
+    def test_save_retention_rejects_non_numeric_values(self):
+        """Test that non-numeric retention values are rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/retention",
+                    data={
+                        "retention_monthly": "often",
+                        "retention_weekly": "4",
+                        "retention_daily": "7",
+                        "retention_hourly": "24",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 400
+                assert "Retention periods must be whole numbers." in response.text
+                assert store.get_settings() == {}
+
+    def test_save_retention_requires_a_positive_value(self):
+        """Test that a policy cannot expire every backup."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/retention",
+                    data={
+                        "retention_monthly": "0",
+                        "retention_weekly": "0",
+                        "retention_daily": "0",
+                        "retention_hourly": "0",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 400
+                assert (
+                    "Keep at least one backup by setting one of the periods above zero."
+                    in response.text
+                )
+                assert store.get_settings() == {}
+
+    def test_save_retention_rejects_excessive_values(self):
+        """Test that unreasonably large retention values are rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/retention",
+                    data={
+                        "retention_monthly": "1001",
+                        "retention_weekly": "4",
+                        "retention_daily": "7",
+                        "retention_hourly": "24",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 400
+                assert "Retention periods cannot exceed 1000." in response.text
+                assert store.get_settings() == {}
 
     def test_save_settings(self):
         """Test saving an automatic backup schedule."""

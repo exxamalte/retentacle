@@ -7,6 +7,8 @@ import httpx
 
 from shelly_backup.backup import Backup
 from shelly_backup.configuration import Configuration
+from shelly_backup.retention import RetentionPolicy
+from shelly_backup.storage import BackupStore
 
 
 class TestBackup:
@@ -361,6 +363,14 @@ class TestBackup:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = Configuration(None, tmpdir, None)
             store = Mock()
+            store.get_settings.return_value = {
+                "retention": {
+                    "monthly": 6,
+                    "weekly": 3,
+                    "daily": 5,
+                    "hourly": 2,
+                }
+            }
             backup = Backup(config, store=store)
             device_settings = {"settings": {"test": "value"}}
             device_info = {"gen": 2, "name": "Kitchen"}
@@ -377,6 +387,55 @@ class TestBackup:
             assert record["generation"] == 2
             assert record["device_info"] == device_info
             assert record["settings"] == device_settings
+            store.prune.assert_called_once_with(
+                "192.168.1.1",
+                RetentionPolicy(monthly=6, weekly=3, daily=5, hourly=2),
+            )
+
+    def test_store_uses_default_retention_policy(self):
+        """Test that the default retention policy applies without settings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            store = Mock()
+            store.get_settings.return_value = {}
+            backup = Backup(config, store=store)
+
+            assert backup._store("192.168.1.1", {}) is True  # noqa: SLF001
+
+            store.prune.assert_called_once_with("192.168.1.1", RetentionPolicy())
+
+    def test_store_ignores_retention_errors(self):
+        """Test that retention errors do not make a stored backup fail."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            store = Mock()
+            store.get_settings.return_value = {}
+            store.prune.side_effect = OSError("disk full")
+            backup = Backup(config, store=store)
+
+            assert backup._store("192.168.1.1", {}) is True  # noqa: SLF001
+
+    def test_store_applies_saved_retention_policy(self):
+        """Test that older backups are pruned using the saved policy."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            store = BackupStore(config.database_path())
+            store.save_settings(
+                {
+                    "retention": {
+                        "monthly": 0,
+                        "weekly": 0,
+                        "daily": 0,
+                        "hourly": 1,
+                    }
+                }
+            )
+            backup = Backup(config, store=store)
+
+            assert backup._store("192.168.1.1", {}) is True  # noqa: SLF001
+            assert backup._store("192.168.1.1", {}) is True  # noqa: SLF001
+
+            assert len(store.by_device("192.168.1.1")) == 1
 
     def test_store_generation_defaults_to_one(self):
         """Test that a missing generation defaults to generation 1."""

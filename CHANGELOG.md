@@ -11,6 +11,7 @@
 * Make automatic backups toggleable and schedule the next run by date and time.
 * Persist the next scheduled backup across server restarts.
 * Keep manual backups from shifting the scheduled next run.
+* Add configurable monthly, weekly, daily, and hourly backup retention.
 * Add device IP address management to the settings page.
 * Add on-demand mDNS device discovery to the settings page.
 * Show discovered device names and mDNS metadata, sorted by IP address.

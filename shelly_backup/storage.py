@@ -8,6 +8,8 @@ from typing import Any
 
 from tinydb import TinyDB
 
+from .retention import RetentionPolicy, select_expired_doc_ids
+
 BackupRecord = dict[str, Any]
 
 _SETTINGS_TABLE = "settings"
@@ -160,6 +162,27 @@ class BackupStore:
         return [
             record for record in self.all() if record.get("ip_address") == ip_address
         ]
+
+    def prune(self, ip_address: str, policy: RetentionPolicy) -> int:
+        """Remove backups for a device that fall outside the retention policy."""
+        if not policy.enabled:
+            return 0
+        with _LOCK:
+            if not self._path.exists():
+                return 0
+            db = TinyDB(self._path)
+            try:
+                records = [
+                    _document_to_record(document)
+                    for document in db.all()
+                    if document.get("ip_address") == ip_address
+                ]
+                expired = select_expired_doc_ids(records, policy)
+                if expired:
+                    db.remove(doc_ids=expired)
+                return len(expired)
+            finally:
+                db.close()
 
     def latest_backup_time(self) -> datetime | None:
         """Return the timestamp of the most recent backup, if any."""

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import tempfile
 
+from shelly_backup.retention import RetentionPolicy
 from shelly_backup.storage import BackupStore
 
 
@@ -130,6 +131,65 @@ class TestBackupStore:
             store.add(_record())
 
             assert store.by_device("10.0.0.1") == []
+
+    def test_prune_removes_expired_backups_for_one_device(self):
+        """Test that pruning only affects the selected device."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store.add(
+                _record(
+                    ip_address="192.168.1.10",
+                    timestamp="2026-11-15T11:00:00+00:00",
+                )
+            )
+            newest_id = store.add(
+                _record(
+                    ip_address="192.168.1.10",
+                    timestamp="2026-11-15T12:00:00+00:00",
+                )
+            )
+            other_id = store.add(
+                _record(
+                    ip_address="192.168.1.11",
+                    timestamp="2026-11-15T10:00:00+00:00",
+                )
+            )
+            policy = RetentionPolicy(monthly=0, weekly=0, daily=0, hourly=1)
+
+            removed = store.prune("192.168.1.10", policy)
+
+            assert removed == 1
+            assert [record["doc_id"] for record in store.all()] == [
+                newest_id,
+                other_id,
+            ]
+
+    def test_prune_without_database(self):
+        """Test pruning a database that does not exist yet."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "missing.json")
+
+            removed = store.prune(
+                "192.168.1.10",
+                RetentionPolicy(monthly=0, weekly=0, daily=0, hourly=1),
+            )
+
+            assert removed == 0
+
+    def test_prune_with_disabled_policy_keeps_all(self):
+        """Test that a disabled policy does not delete backups."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store.add(_record(timestamp="2026-11-15T10:00:00+00:00"))
+            store.add(_record(timestamp="2026-11-15T12:00:00+00:00"))
+
+            removed = store.prune(
+                "192.168.1.10",
+                RetentionPolicy(monthly=0, weekly=0, daily=0, hourly=0),
+            )
+
+            assert removed == 0
+            assert len(store.all()) == 2
 
     def test_devices_without_records(self):
         """Test device summaries without any records."""
