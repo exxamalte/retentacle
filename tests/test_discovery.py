@@ -12,6 +12,7 @@ from shelly_backup.discovery import (
     _collect_from_browser,
     discover_shelly_device_details,
     discover_shelly_devices,
+    iter_shelly_device_details,
 )
 
 
@@ -330,6 +331,95 @@ class TestDiscoveredDevice:
             "192.168.1.10",
             "2001:db8::1",
         ]
+
+    def test_sort_key_text_sorts_as_string(self):
+        """Test that the text sort key orders IPv6 addresses correctly as strings."""
+        expected = [
+            "192.168.1.2",
+            "192.168.1.10",
+            "2001:db8::1",
+            "2001:db8::2",
+        ]
+        devices = [DiscoveredDevice(address) for address in reversed(expected)]
+
+        assert [
+            device.ip_address
+            for device in sorted(devices, key=lambda device: device.sort_key_text)
+        ] == expected
+
+
+class TestIterShellyDeviceDetails:
+    """Tests for iter_shelly_device_details."""
+
+    @patch("shelly_backup.discovery.time.sleep")
+    @patch("shelly_backup.discovery.ServiceBrowser")
+    @patch("shelly_backup.discovery.Zeroconf")
+    def test_yields_devices_as_they_are_discovered(
+        self, mock_zeroconf_class, mock_browser_class, mock_sleep
+    ):
+        """Test that devices are yielded as soon as they are found."""
+        zeroconf = mock_zeroconf_class.return_value
+        listeners = []
+
+        def create_browser(_zeroconf, service_type, listener):
+            listeners.append(listener)
+            browser = Mock()
+            browser.type = service_type
+            browser.services = {}
+            return browser
+
+        mock_browser_class.side_effect = create_browser
+
+        def sleep(_seconds):
+            cycle = len(mock_sleep.call_args_list)
+            if cycle == 1:
+                listeners[0].devices.append(DiscoveredDevice("192.168.1.10"))
+            elif cycle == 2:
+                listeners[0].devices.extend(
+                    [
+                        DiscoveredDevice("192.168.1.10"),
+                        DiscoveredDevice("192.168.1.11"),
+                    ]
+                )
+
+        mock_sleep.side_effect = sleep
+
+        generator = iter_shelly_device_details(timeout=3)
+
+        assert next(generator).ip_address == "192.168.1.10"
+        assert next(generator).ip_address == "192.168.1.11"
+        with pytest.raises(StopIteration):
+            next(generator)
+
+        zeroconf.close.assert_called_once()
+
+    @patch("shelly_backup.discovery.time.sleep")
+    @patch("shelly_backup.discovery.ServiceBrowser")
+    @patch("shelly_backup.discovery.Zeroconf")
+    def test_closes_zeroconf_when_consumer_stops(
+        self, mock_zeroconf_class, mock_browser_class, mock_sleep
+    ):
+        """Test that stopping early still closes Zeroconf."""
+        zeroconf = mock_zeroconf_class.return_value
+        listeners = []
+
+        def create_browser(_zeroconf, service_type, listener):
+            listeners.append(listener)
+            browser = Mock()
+            browser.type = service_type
+            browser.services = {}
+            return browser
+
+        mock_browser_class.side_effect = create_browser
+        mock_sleep.side_effect = lambda _seconds: listeners[0].devices.append(
+            DiscoveredDevice("192.168.1.10")
+        )
+
+        generator = iter_shelly_device_details(timeout=10)
+        assert next(generator).ip_address == "192.168.1.10"
+        generator.close()
+
+        zeroconf.close.assert_called_once()
 
 
 class TestDiscoverShellyDevices:

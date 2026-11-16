@@ -1,6 +1,7 @@
 """Web server for browsing and scheduling Shelly backups."""
 
 import asyncio
+from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -11,7 +12,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import URL
 import uvicorn
@@ -19,7 +25,11 @@ import uvicorn
 from .backup import Backup
 from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME
-from .discovery import DiscoveredDevice, discover_shelly_device_details
+from .discovery import (
+    DiscoveredDevice,
+    discover_shelly_device_details,
+    iter_shelly_device_details,
+)
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
 
@@ -103,6 +113,22 @@ def _parse_ip_addresses(value: str) -> list[str]:
     return [str(ipaddress.ip_address(candidate)) for candidate in candidates]
 
 
+def _normalize_discovered_device(
+    device: DiscoveredDevice, configured: set[str]
+) -> DiscoveredDevice | None:
+    """Normalize a discovered device and drop invalid or configured entries."""
+    try:
+        ip_address = str(ipaddress.ip_address(device.ip_address))
+    except ValueError:
+        _LOGGER.warning("Ignoring invalid discovered IP address: %r", device.ip_address)
+        return None
+    if ip_address in configured:
+        return None
+    if ip_address == device.ip_address:
+        return device
+    return replace(device, ip_address=ip_address)
+
+
 def _new_discovered_devices(
     discovered: list[DiscoveredDevice], configured: list[str]
 ) -> list[DiscoveredDevice]:
@@ -111,22 +137,52 @@ def _new_discovered_devices(
     new_devices: list[DiscoveredDevice] = []
     seen: set[str] = set()
     for device in discovered:
-        try:
-            ip_address = str(ipaddress.ip_address(device.ip_address))
-        except ValueError:
-            _LOGGER.warning(
-                "Ignoring invalid discovered IP address: %r", device.ip_address
-            )
+        normalized = _normalize_discovered_device(device, configured_addresses)
+        if normalized is None or normalized.ip_address in seen:
             continue
-        if ip_address in configured_addresses or ip_address in seen:
-            continue
-        seen.add(ip_address)
-        new_devices.append(
-            device
-            if device.ip_address == ip_address
-            else replace(device, ip_address=ip_address)
-        )
+        seen.add(normalized.ip_address)
+        new_devices.append(normalized)
     return sorted(new_devices, key=lambda device: device.sort_key)
+
+
+def _discovery_event(device: DiscoveredDevice) -> str:
+    """Serialize a discovered device as a newline-delimited JSON event."""
+    return (
+        json.dumps(
+            {
+                "ip_address": device.ip_address,
+                "name": device.name,
+                "details": device.details,
+                "sort_key": device.sort_key_text,
+            }
+        )
+        + "\n"
+    )
+
+
+def _discover_stream(configured: list[str]) -> Iterator[str]:
+    """Stream newly discovered devices as newline-delimited JSON."""
+    configured_addresses = set(configured)
+    seen: set[str] = set()
+    try:
+        for device in iter_shelly_device_details(timeout=_DISCOVERY_TIMEOUT):
+            normalized = _normalize_discovered_device(device, configured_addresses)
+            if normalized is None or normalized.ip_address in seen:
+                continue
+            seen.add(normalized.ip_address)
+            yield _discovery_event(normalized)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Device discovery failed")
+        yield (
+            json.dumps(
+                {
+                    "error": (
+                        "Unable to discover devices. Check the server logs and try again."
+                    )
+                }
+            )
+            + "\n"
+        )
 
 
 def _saved_ip_addresses(store: BackupStore) -> list[str]:
@@ -346,6 +402,18 @@ def _register_device_settings_routes(
             scheduler,
             discovered_devices=discovered_devices,
             discovery_ran=True,
+        )
+
+    @app.post("/settings/discover/stream")
+    async def discover_devices_stream():
+        """Stream newly discovered devices as newline-delimited JSON."""
+        return StreamingResponse(
+            _discover_stream(_saved_ip_addresses(store)),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     @app.post("/settings/devices")

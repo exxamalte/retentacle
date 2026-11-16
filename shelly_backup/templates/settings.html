@@ -116,13 +116,55 @@
     {% endif %}
 
     <div class="form-actions device-discovery">
-      <form method="post" action="/settings/discover">
+      <form method="post" action="/settings/discover" data-discovery-form>
         <button class="button" type="submit">Discover devices</button>
       </form>
       <p class="field-help">
         Scan the network via mDNS. Only devices not already added are shown.
       </p>
     </div>
+
+    <p
+      class="field-help discovery-status"
+      data-discovery-status
+      role="status"
+      aria-live="polite"
+      hidden
+    ></p>
+
+    <div class="alert" role="alert" data-discovery-error hidden>
+      <strong>Discovery failed:</strong>
+      <span data-discovery-error-message></span>
+    </div>
+
+    <div data-discovery-results hidden>
+      <form
+        method="post"
+        action="/settings/devices"
+        class="device-form"
+        data-discovery-results-form
+      >
+        <h2>New devices found</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col"><span class="sr-only">Add</span></th>
+                <th scope="col">IP address</th>
+                <th scope="col">Device</th>
+                <th scope="col">Details</th>
+              </tr>
+            </thead>
+            <tbody data-discovery-rows></tbody>
+          </table>
+        </div>
+        <div class="form-actions">
+          <button class="button primary" type="submit">Add selected devices</button>
+        </div>
+      </form>
+    </div>
+
+    <p class="field-help" data-discovery-empty hidden></p>
 
     {% if discovery_error %}
       <div class="alert" role="alert">
@@ -202,4 +244,163 @@
     Settings are stored in the backup database and override the configuration
     file for this server.
   </p>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    (() => {
+      const form = document.querySelector('[data-discovery-form]');
+      if (!form) {
+        return;
+      }
+
+      const button = form.querySelector('button[type="submit"]');
+      const status = document.querySelector('[data-discovery-status]');
+      const errorBox = document.querySelector('[data-discovery-error]');
+      const errorMessage = document.querySelector('[data-discovery-error-message]');
+      const results = document.querySelector('[data-discovery-results]');
+      const rows = document.querySelector('[data-discovery-rows]');
+      const empty = document.querySelector('[data-discovery-empty]');
+      const buttonLabel = button.textContent;
+
+      let found = 0;
+
+      function compareRows(left, right) {
+        const leftKey = left.dataset.sortKey || '';
+        const rightKey = right.dataset.sortKey || '';
+        if (leftKey === rightKey) {
+          return 0;
+        }
+        return leftKey < rightKey ? -1 : 1;
+      }
+
+      function appendDevice(device) {
+        const row = document.createElement('tr');
+        row.dataset.sortKey = device.sort_key || '0:000000000000000000000000000000000000000';
+
+        const checkboxCell = document.createElement('td');
+        checkboxCell.className = 'checkbox-cell';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.name = 'ip_addresses';
+        checkbox.value = device.ip_address;
+        checkbox.checked = true;
+        checkboxCell.append(checkbox);
+
+        const ipCell = document.createElement('td');
+        const ip = document.createElement('span');
+        ip.className = 'device-ip';
+        ip.textContent = device.ip_address;
+        ipCell.append(ip);
+
+        const nameCell = document.createElement('td');
+        const name = document.createElement('span');
+        name.className = 'device-name';
+        name.textContent = device.name || device.ip_address;
+        nameCell.append(name);
+
+        const detailsCell = document.createElement('td');
+        const details = document.createElement('span');
+        details.className = 'device-meta';
+        details.textContent = device.details || '—';
+        detailsCell.append(details);
+
+        row.append(checkboxCell, ipCell, nameCell, detailsCell);
+
+        const nextRow = Array.from(rows.children).find(
+          (candidate) => compareRows(candidate, row) > 0
+        );
+        rows.insertBefore(row, nextRow || null);
+        results.hidden = false;
+      }
+
+      function showError(message) {
+        errorMessage.textContent = message;
+        errorBox.hidden = false;
+      }
+
+      function reset() {
+        found = 0;
+        rows.replaceChildren();
+        results.hidden = true;
+        empty.hidden = true;
+        empty.textContent = 'No new devices found.';
+        errorBox.hidden = true;
+        errorMessage.textContent = '';
+      }
+
+      async function streamDevices() {
+        const response = await fetch('/settings/discover/stream', {
+          method: 'POST',
+          headers: { Accept: 'application/x-ndjson' },
+          cache: 'no-store',
+        });
+        if (!response.ok || !response.body) {
+          throw new Error('Discovery request failed');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function handleLine(line) {
+          if (!line) {
+            return;
+          }
+          const event = JSON.parse(line);
+          if (event.error) {
+            showError(event.error);
+            return;
+          }
+          appendDevice(event);
+          found += 1;
+          status.textContent =
+            'Searching for devices… ' + found + ' found so far.';
+        }
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          let newline = buffer.indexOf('\n');
+          while (newline !== -1) {
+            handleLine(buffer.slice(0, newline).trim());
+            buffer = buffer.slice(newline + 1);
+            newline = buffer.indexOf('\n');
+          }
+        }
+        handleLine(buffer.trim());
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        reset();
+        button.disabled = true;
+        button.textContent = 'Searching…';
+        status.hidden = false;
+        status.textContent = 'Searching for devices…';
+
+        try {
+          await streamDevices();
+          if (found > 0) {
+            status.textContent =
+              'Found ' + found + (found === 1 ? ' new device.' : ' new devices.');
+          } else if (errorBox.hidden) {
+            empty.hidden = false;
+            status.hidden = true;
+          } else {
+            status.hidden = true;
+          }
+        } catch (error) {
+          showError('Unable to discover devices. Check the server logs and try again.');
+          status.hidden = true;
+        } finally {
+          button.disabled = false;
+          button.textContent = buttonLabel;
+        }
+      });
+    })();
+  </script>
 {% endblock %}

@@ -1,6 +1,7 @@
 """Tests for the web server module."""
 
 from datetime import UTC, datetime
+import json
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import urlencode
@@ -810,7 +811,7 @@ class TestServer:
         assert 'value="2001:db8::1"' in response.text
         assert "ShellyPlus1PM-ABC" in response.text
         assert "Plus1PM · gen 2 · 1.4.4" in response.text
-        assert "No new devices found." not in response.text
+        assert "data-discovery-empty hidden>No new devices found." not in response.text
 
     def test_discover_devices_reports_when_nothing_is_new(self):
         """Test that discovery reports when all found devices are configured."""
@@ -893,6 +894,70 @@ class TestServer:
             < response.text.index('value="192.168.1.20"')
             < response.text.index('value="2001:db8::1"')
         )
+
+    def test_discover_devices_streams_new_devices(self):
+        """Test that discovery streams filtered devices as NDJSON events."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["192.168.1.10"]})
+            with (
+                patch(
+                    "shelly_backup.server.iter_shelly_device_details",
+                    return_value=iter(
+                        [
+                            DiscoveredDevice("192.168.1.10"),
+                            DiscoveredDevice(
+                                "192.168.1.20",
+                                name="ShellyPlus1PM-ABC",
+                                model="Plus1PM",
+                                generation=2,
+                                version="1.4.4",
+                            ),
+                            DiscoveredDevice("192.168.1.20"),
+                            DiscoveredDevice("2001:0db8::0001"),
+                            DiscoveredDevice("not-an-ip"),
+                        ]
+                    ),
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.post("/settings/discover/stream")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/x-ndjson")
+        assert response.headers["cache-control"] == "no-store"
+        events = [json.loads(line) for line in response.text.splitlines()]
+        assert [event["ip_address"] for event in events] == [
+            "192.168.1.20",
+            "2001:db8::1",
+        ]
+        assert events[0]["name"] == "ShellyPlus1PM-ABC"
+        assert events[0]["details"] == "Plus1PM · gen 2 · 1.4.4"
+        assert events[0]["sort_key"].startswith("4:")
+        assert events[1]["sort_key"].startswith("6:")
+
+    def test_discover_devices_streams_errors(self):
+        """Test that discovery failures are streamed as an error event."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with (
+                patch(
+                    "shelly_backup.server.iter_shelly_device_details",
+                    side_effect=RuntimeError("discovery failed"),
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.post("/settings/discover/stream")
+
+        assert response.status_code == 200
+        events = [json.loads(line) for line in response.text.splitlines()]
+        assert events == [
+            {
+                "error": (
+                    "Unable to discover devices. Check the server logs and try again."
+                )
+            }
+        ]
 
     def test_add_devices_from_discovery_selection(self):
         """Test adding multiple devices selected from discovery results."""

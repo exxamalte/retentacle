@@ -1,5 +1,6 @@
 """mDNS discovery for Shelly devices."""
 
+from collections.abc import Iterator
 import contextlib
 from dataclasses import dataclass
 import ipaddress
@@ -41,6 +42,12 @@ class DiscoveredDevice:
         except ValueError:
             return (0, 0)
         return (address.version, int(address))
+
+    @property
+    def sort_key_text(self) -> str:
+        """Return a zero-padded key that sorts correctly as a string."""
+        version, value = self.sort_key
+        return f"{version}:{value:039d}"
 
 
 def _decode(value: object) -> str:
@@ -181,8 +188,10 @@ def _collect_from_browser(
         pass
 
 
-def discover_shelly_device_details(timeout: float = 60.0) -> list[DiscoveredDevice]:
-    """Discover Shelly devices on the network via mDNS."""
+def iter_shelly_device_details(
+    timeout: float = 60.0,
+) -> Iterator[DiscoveredDevice]:
+    """Yield Shelly devices as they are discovered on the network via mDNS."""
     devices: dict[str, DiscoveredDevice] = {}
 
     zeroconf = Zeroconf()
@@ -198,13 +207,23 @@ def discover_shelly_device_details(timeout: float = 60.0) -> list[DiscoveredDevi
             for device in listener.devices:
                 if device.ip_address and device.ip_address not in devices:
                     devices[device.ip_address] = device
+                    yield device
             for browser in browsers:
+                known = set(devices)
                 _collect_from_browser(zeroconf, browser, devices)
+                for ip_address, device in devices.items():
+                    if ip_address not in known:
+                        yield device
     finally:
         with contextlib.suppress(OSError, RuntimeError):
             zeroconf.close()
 
-    return sorted(devices.values(), key=lambda device: device.sort_key)
+
+def discover_shelly_device_details(timeout: float = 60.0) -> list[DiscoveredDevice]:
+    """Discover Shelly devices on the network via mDNS."""
+    return sorted(
+        iter_shelly_device_details(timeout), key=lambda device: device.sort_key
+    )
 
 
 def discover_shelly_devices(timeout: float = 60.0) -> list[str]:
