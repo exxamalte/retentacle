@@ -1,5 +1,6 @@
 """Persistent storage for device backups."""
 
+from datetime import UTC, datetime
 import ipaddress
 from pathlib import Path
 import threading
@@ -159,6 +160,25 @@ class BackupStore:
         return [
             record for record in self.all() if record.get("ip_address") == ip_address
         ]
+
+    def latest_backup_time(self) -> datetime | None:
+        """Return the timestamp of the most recent backup, if any."""
+        records = self.all()
+        if not records:
+            return None
+        value = records[0].get("timestamp")
+        if isinstance(value, datetime):
+            timestamp = value
+        elif isinstance(value, str):
+            try:
+                timestamp = datetime.fromisoformat(value)
+            except ValueError:
+                return None
+        else:
+            return None
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        return timestamp
 
     def devices(self) -> list[dict[str, Any]]:
         """Return a summary of all devices that have backups."""
