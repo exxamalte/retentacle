@@ -17,7 +17,7 @@ _INTERVAL_FACTORS = {
 }
 
 
-def _parse_interval(value: float | str) -> int:
+def parse_interval(value: float | str) -> int:
     """Parse an interval value into seconds."""
     if isinstance(value, bool):
         raise TypeError(f"Invalid interval: {value!r}")
@@ -96,9 +96,9 @@ class Configuration:
     def interval(self) -> int:
         """Get the interval between automatic backups in seconds."""
         if self._configuration and "interval" in self._configuration:
-            return _parse_interval(self._configuration["interval"])
+            return parse_interval(self._configuration["interval"])
         if self._interval is not None:
-            return _parse_interval(self._interval)
+            return parse_interval(self._interval)
         return DEFAULT_INTERVAL
 
     def host(self) -> str:

@@ -21,6 +21,8 @@ class BackupScheduler:
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._progress_lock = threading.Lock()
+        self._reschedule = asyncio.Event()
+        self._next_run_at: datetime | None = None
         self._pending_runs = 0
         self.last_run: datetime | None = None
         self.last_error: str | None = None
@@ -80,9 +82,27 @@ class BackupScheduler:
     @property
     def next_run(self) -> datetime | None:
         """Get the time of the next scheduled backup."""
-        if not self.enabled or self.last_run is None:
+        if not self.enabled:
             return None
-        return self.last_run + timedelta(seconds=self._interval)
+        return self._next_run_at
+
+    async def set_interval(self, interval: float) -> None:
+        """Update the interval and reschedule the next backup."""
+        self._interval = float(interval)
+        self._next_run_at = (
+            datetime.now(UTC) + timedelta(seconds=self._interval)
+            if self.enabled
+            else None
+        )
+        if not self.enabled:
+            # The run loop, if active, waits for the interval to be enabled
+            # again. Do not cancel a backup that may currently be running.
+            self._reschedule.set()
+            return
+        if self._task is None:
+            await self.start()
+        else:
+            self._reschedule.set()
 
     async def start(self) -> None:
         """Start the background scheduler."""
@@ -144,6 +164,11 @@ class BackupScheduler:
                 _LOGGER.exception("Backup run failed")
             finally:
                 self.last_run = datetime.now(UTC)
+                self._next_run_at = (
+                    self.last_run + timedelta(seconds=self._interval)
+                    if self.enabled
+                    else None
+                )
                 self.run_count += 1
                 with self._progress_lock:
                     self.progress_current = None
@@ -162,8 +187,25 @@ class BackupScheduler:
                 with self._progress_lock:
                     self.progress_current = None
 
+    async def _wait_for_next_run(self) -> None:
+        """Wait for the current interval to elapse or to be changed."""
+        while True:
+            if not self.enabled:
+                await self._reschedule.wait()
+                self._reschedule.clear()
+                return
+            try:
+                await asyncio.wait_for(self._reschedule.wait(), timeout=self._interval)
+            except TimeoutError:
+                return
+            self._reschedule.clear()
+
     async def _run_loop(self) -> None:
         """Run backups until the scheduler is stopped."""
         while True:
+            if not self.enabled:
+                await self._reschedule.wait()
+                self._reschedule.clear()
+                continue
             await self.run_once()
-            await asyncio.sleep(self._interval)
+            await self._wait_for_next_run()

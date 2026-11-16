@@ -9,6 +9,9 @@ from tinydb import TinyDB
 
 BackupRecord = dict[str, Any]
 
+_SETTINGS_TABLE = "settings"
+_SETTINGS_DOC_ID = 1
+
 # A single lock protects all stores. TinyDB does not support concurrent access
 # to the same file from multiple instances, and the server reads while the
 # scheduler writes.
@@ -92,6 +95,30 @@ class BackupStore:
     def path(self) -> Path:
         """Get the path to the TinyDB database."""
         return self._path
+
+    def get_settings(self) -> dict[str, Any]:
+        """Return persisted application settings."""
+        with _LOCK:
+            if not self._path.exists():
+                return {}
+            db = TinyDB(self._path)
+            try:
+                document = db.table(_SETTINGS_TABLE).get(doc_id=_SETTINGS_DOC_ID)
+            finally:
+                db.close()
+        return dict(document) if document is not None else {}
+
+    def save_settings(self, settings: dict[str, Any]) -> None:
+        """Persist application settings, replacing previously saved values."""
+        with _LOCK:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            db = TinyDB(self._path)
+            try:
+                table = db.table(_SETTINGS_TABLE)
+                table.truncate()
+                table.insert(dict(settings))
+            finally:
+                db.close()
 
     def add(self, record: BackupRecord) -> int:
         """Store a backup record and return its document ID."""

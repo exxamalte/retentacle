@@ -10,7 +10,8 @@ ip_addresses:
 target_folder: backup_folder
 
 # Interval between automatic backups. Accepts values such as 30m, 1h, or 1d.
-# Use 0 to disable automatic backups.
+# Use 0 to disable automatic backups. This can also be changed at runtime on
+# the web UI settings page, which takes precedence over this value.
 interval: 1h
 
 # Web server bind address and port.
