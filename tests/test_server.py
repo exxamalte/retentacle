@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from shelly_backup.configuration import Configuration
+from shelly_backup.discovery import DiscoveredDevice
 from shelly_backup.server import (
     _effective_ip_addresses,
     _format_interval,
@@ -785,11 +786,17 @@ class TestServer:
             store.save_settings({"ip_addresses": ["192.168.1.10"]})
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_devices",
+                    "shelly_backup.server.discover_shelly_device_details",
                     return_value=[
-                        "192.168.1.10",
-                        "192.168.1.11",
-                        "2001:0db8::0001",
+                        DiscoveredDevice("192.168.1.10"),
+                        DiscoveredDevice(
+                            "192.168.1.11",
+                            name="ShellyPlus1PM-ABC",
+                            model="Plus1PM",
+                            generation=2,
+                            version="1.4.4",
+                        ),
+                        DiscoveredDevice("2001:0db8::0001"),
                     ],
                 ),
                 TestClient(app) as client,
@@ -801,6 +808,8 @@ class TestServer:
         assert response.text.count('type="checkbox"\n') == 2
         assert 'value="192.168.1.11"' in response.text
         assert 'value="2001:db8::1"' in response.text
+        assert "ShellyPlus1PM-ABC" in response.text
+        assert "Plus1PM · gen 2 · 1.4.4" in response.text
         assert "No new devices found." not in response.text
 
     def test_discover_devices_reports_when_nothing_is_new(self):
@@ -810,8 +819,8 @@ class TestServer:
             store.save_settings({"ip_addresses": ["192.168.1.10"]})
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_devices",
-                    return_value=["192.168.1.10"],
+                    "shelly_backup.server.discover_shelly_device_details",
+                    return_value=[DiscoveredDevice("192.168.1.10")],
                 ),
                 TestClient(app) as client,
             ):
@@ -827,7 +836,7 @@ class TestServer:
             app, _ = _create_app(tmpdir)
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_devices",
+                    "shelly_backup.server.discover_shelly_device_details",
                     side_effect=RuntimeError("discovery failed"),
                 ),
                 TestClient(app) as client,
@@ -844,12 +853,12 @@ class TestServer:
             app, _ = _create_app(tmpdir)
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_devices",
+                    "shelly_backup.server.discover_shelly_device_details",
                     return_value=[
-                        "192.168.1.11",
-                        "192.168.1.11",
-                        "2001:0db8::0001",
-                        "not-an-ip",
+                        DiscoveredDevice("192.168.1.11"),
+                        DiscoveredDevice("192.168.1.11"),
+                        DiscoveredDevice("2001:0db8::0001"),
+                        DiscoveredDevice("not-an-ip"),
                     ],
                 ),
                 TestClient(app) as client,
@@ -860,6 +869,30 @@ class TestServer:
         assert response.text.count('type="checkbox"\n') == 2
         assert 'value="2001:db8::1"' in response.text
         assert "not-an-ip" not in response.text
+
+    def test_discover_devices_sorts_by_ip_address(self):
+        """Test that discovered devices are sorted numerically by IP address."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with (
+                patch(
+                    "shelly_backup.server.discover_shelly_device_details",
+                    return_value=[
+                        DiscoveredDevice("192.168.1.20"),
+                        DiscoveredDevice("2001:db8::1"),
+                        DiscoveredDevice("192.168.1.3"),
+                    ],
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.post("/settings/discover")
+
+        assert response.status_code == 200
+        assert (
+            response.text.index('value="192.168.1.3"')
+            < response.text.index('value="192.168.1.20"')
+            < response.text.index('value="2001:db8::1"')
+        )
 
     def test_add_devices_from_discovery_selection(self):
         """Test adding multiple devices selected from discovery results."""

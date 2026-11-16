@@ -10,6 +10,7 @@
 * Add a settings page for changing the backup interval at runtime.
 * Add device IP address management to the settings page.
 * Add on-demand mDNS device discovery to the settings page.
+* Show discovered device names and mDNS metadata, sorted by IP address.
 * Show the actual last backup time on the overview instead of the server start time.
 * Add `--interval`, `--host`, and `--port` options.
 * Add `--once` for the original single-run backup behaviour.

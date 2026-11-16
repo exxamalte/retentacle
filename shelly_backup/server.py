@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 import ipaddress
 import json
@@ -18,7 +19,7 @@ import uvicorn
 from .backup import Backup
 from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME
-from .discovery import discover_shelly_devices
+from .discovery import DiscoveredDevice, discover_shelly_device_details
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
 
@@ -102,24 +103,30 @@ def _parse_ip_addresses(value: str) -> list[str]:
     return [str(ipaddress.ip_address(candidate)) for candidate in candidates]
 
 
-def _new_discovered_ip_addresses(
-    discovered: list[str], configured: list[str]
-) -> list[str]:
-    """Return normalized discovered addresses that are not configured yet."""
+def _new_discovered_devices(
+    discovered: list[DiscoveredDevice], configured: list[str]
+) -> list[DiscoveredDevice]:
+    """Return discovered devices that are not configured yet, sorted by IP."""
     configured_addresses = set(configured)
-    new_ip_addresses: list[str] = []
-    for value in discovered:
+    new_devices: list[DiscoveredDevice] = []
+    seen: set[str] = set()
+    for device in discovered:
         try:
-            ip_address = str(ipaddress.ip_address(str(value)))
+            ip_address = str(ipaddress.ip_address(device.ip_address))
         except ValueError:
-            _LOGGER.warning("Ignoring invalid discovered IP address: %r", value)
+            _LOGGER.warning(
+                "Ignoring invalid discovered IP address: %r", device.ip_address
+            )
             continue
-        if (
-            ip_address not in configured_addresses
-            and ip_address not in new_ip_addresses
-        ):
-            new_ip_addresses.append(ip_address)
-    return new_ip_addresses
+        if ip_address in configured_addresses or ip_address in seen:
+            continue
+        seen.add(ip_address)
+        new_devices.append(
+            device
+            if device.ip_address == ip_address
+            else replace(device, ip_address=ip_address)
+        )
+    return sorted(new_devices, key=lambda device: device.sort_key)
 
 
 def _saved_ip_addresses(store: BackupStore) -> list[str]:
@@ -276,7 +283,7 @@ def _settings_context(
         "ip_addresses_value": "",
         "fallback_ip_addresses": configuration.ip_addresses() or [],
         "discover": configuration.discover(),
-        "discovered_ip_addresses": [],
+        "discovered_devices": [],
         "discovery_ran": False,
         "discovery_error": None,
         "saved": False,
@@ -316,7 +323,7 @@ def _register_device_settings_routes(
         """Discover Shelly devices and offer the ones not added yet."""
         try:
             discovered = await asyncio.to_thread(
-                discover_shelly_devices, timeout=_DISCOVERY_TIMEOUT
+                discover_shelly_device_details, timeout=_DISCOVERY_TIMEOUT
             )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Device discovery failed")
@@ -329,7 +336,7 @@ def _register_device_settings_routes(
                     "Unable to discover devices. Check the server logs and try again."
                 ),
             )
-        discovered_ip_addresses = _new_discovered_ip_addresses(
+        discovered_devices = _new_discovered_devices(
             discovered, _saved_ip_addresses(store)
         )
         return _render_settings(
@@ -337,7 +344,7 @@ def _register_device_settings_routes(
             configuration,
             store,
             scheduler,
-            discovered_ip_addresses=discovered_ip_addresses,
+            discovered_devices=discovered_devices,
             discovery_ran=True,
         )
 
