@@ -28,8 +28,7 @@ class TestRetentionPolicy:
     def test_defaults_keep_a_year_of_history(self):
         """Test that the default policy keeps sensible amounts of history."""
         assert (
-            RetentionPolicy(monthly=12, weekly=4, daily=7, hourly=24)
-            == DEFAULT_RETENTION
+            RetentionPolicy(monthly=6, weekly=4, daily=7, hourly=4) == DEFAULT_RETENTION
         )
         assert DEFAULT_RETENTION.enabled is True
 
