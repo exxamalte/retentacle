@@ -155,6 +155,48 @@ class TestBackupScheduler:
         assert scheduler.last_backed_up == ["192.168.1.10"]
 
     @pytest.mark.asyncio
+    async def test_run_once_uses_ip_addresses_provider(self):
+        """Test that scheduled runs use devices from the provider."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(
+            backup,
+            60,
+            ip_addresses_provider=lambda: ["192.168.1.10", "192.168.1.11"],
+        )
+
+        await scheduler.run_once()
+
+        backup.execute.assert_called_once_with(
+            ["192.168.1.10", "192.168.1.11"], ANY, ANY
+        )
+
+    @pytest.mark.asyncio
+    async def test_explicit_ip_addresses_override_provider(self):
+        """Test that explicitly provided devices take precedence."""
+        backup = Mock()
+        backup.execute.return_value = []
+        provider = Mock(return_value=["192.168.1.10"])
+        scheduler = BackupScheduler(backup, 60, ip_addresses_provider=provider)
+
+        await scheduler.run_once(["192.168.1.20"])
+
+        backup.execute.assert_called_once_with(["192.168.1.20"], ANY, ANY)
+        provider.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_once_reports_provider_errors(self):
+        """Test that a failing device provider is reported as a run error."""
+        backup = Mock()
+        provider = Mock(side_effect=RuntimeError("provider failed"))
+        scheduler = BackupScheduler(backup, 60, ip_addresses_provider=provider)
+
+        await scheduler.run_once()
+
+        assert scheduler.last_error == "provider failed"
+        backup.execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_run_once_tracks_progress(self):
         """Test that a backup run reports per-device progress."""
         scheduler = BackupScheduler(ProgressBackup(), 60)
@@ -361,6 +403,28 @@ class TestBackupScheduler:
             await scheduler.stop()
 
         assert scheduler.started is False
+
+    @pytest.mark.asyncio
+    async def test_start_uses_ip_addresses_provider(self):
+        """Test that the background loop uses devices from the provider."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(
+            backup,
+            3600,
+            ip_addresses_provider=lambda: ["192.168.1.10"],
+        )
+
+        await scheduler.start()
+        try:
+            for _ in range(100):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.01)
+
+            backup.execute.assert_called_once_with(["192.168.1.10"], ANY, ANY)
+        finally:
+            await scheduler.stop()
 
     @pytest.mark.asyncio
     async def test_stop_without_start(self):

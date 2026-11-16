@@ -51,6 +51,9 @@ every hour. Open that address in a browser to see the devices overview. The
 first backup starts immediately after startup; subsequent backups run at the
 configured interval.
 
+You can also start the server without specifying device IP addresses and add
+them later on the Settings page.
+
 ### Server options
 
 | Option | Description |
@@ -78,24 +81,27 @@ The server has no authentication. Only expose it on networks you trust.
 * `/devices/<ip-address>` - all backups for one device, newest first.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
-* `/settings` - configure the backup interval and other server settings.
+* `/settings` - configure the backup interval and device IP addresses.
 * `/api/status` - scheduler status and live backup progress as JSON.
 * `/health` - server and scheduler status as JSON.
 
-A **Run backup now** button is available on every page and backs up all devices
-currently listed in the overview. If no devices have been registered yet, it
-falls back to the configured or discovered devices. The device detail page also
-has a **Back up this device** button to back up just that device without waiting
-for the next scheduled run.
+A **Run backup now** button is available on every page. It backs up the devices
+configured on the Settings page. If no devices are configured there, it backs up
+all devices currently listed in the overview, falling back to the configured or
+discovered devices when the overview is empty. The device detail page also has a
+**Back up this device** button to back up just that device without waiting for
+the next scheduled run.
 
 While a backup is running, the page shows a live progress bar and updates the
 status automatically. Once the run finishes, the page reloads so newly created
 backups appear without a manual refresh.
 
-The **Settings** page lets you change the backup interval while the server is
-running. Changes take effect immediately and are stored in the TinyDB database,
-so they survive a restart. Settings saved in the web UI take precedence over
-both the configuration file and command line options.
+The **Settings** page lets you change the backup interval and add or remove
+device IP addresses while the server is running. Devices added there are used
+for scheduled and manual backups and take precedence over the configuration
+file and `--ip-address`. Changes take effect immediately and are stored in the
+TinyDB database, so they survive a restart. Settings saved in the web UI take
+precedence over both the configuration file and command line options.
 
 ## One-shot backup
 
@@ -119,6 +125,17 @@ You can automatically discover Shelly devices on the network via mDNS:
 ```commandline
 shelly-backup --discover
 ```
+
+The **Settings** page also has a **Discover devices** button. It scans the
+network on demand and lets you select which discovered devices to add. Results
+appear as soon as they are found, without reloading the page, are sorted by IP
+address, and show the device name, model/type, generation, and firmware version
+advertised via mDNS when available. Only devices that are not already in the
+Settings device list are offered, so running discovery again shows just the new
+ones.
+
+The `--discover` option and `discover: true` configuration value remain
+available as a fallback when no devices are configured in Settings.
 
 ## Configuration file
 

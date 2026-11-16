@@ -1,14 +1,23 @@
 """Web server for browsing and scheduling Shelly backups."""
 
+import asyncio
+from collections.abc import Iterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
+import ipaddress
 import json
 import logging
 from pathlib import Path
 from urllib.parse import parse_qs, quote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import URL
 import uvicorn
@@ -16,12 +25,18 @@ import uvicorn
 from .backup import Backup
 from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME
+from .discovery import (
+    DiscoveredDevice,
+    discover_shelly_device_details,
+    iter_shelly_device_details,
+)
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
 
 _LOGGER = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
+_DISCOVERY_TIMEOUT = 5.0
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 templates.env.globals["application_name"] = APPLICATION_NAME
 
@@ -90,6 +105,130 @@ def _effective_interval(configuration: Configuration, store: BackupStore) -> int
     return configuration.interval()
 
 
+def _parse_ip_addresses(value: str) -> list[str]:
+    """Parse and validate a whitespace or comma separated list of IP addresses."""
+    candidates = value.replace(",", " ").split()
+    if not candidates:
+        raise ValueError("Enter at least one IP address.")
+    return [str(ipaddress.ip_address(candidate)) for candidate in candidates]
+
+
+def _normalize_discovered_device(
+    device: DiscoveredDevice, configured: set[str]
+) -> DiscoveredDevice | None:
+    """Normalize a discovered device and drop invalid or configured entries."""
+    try:
+        ip_address = str(ipaddress.ip_address(device.ip_address))
+    except ValueError:
+        _LOGGER.warning("Ignoring invalid discovered IP address: %r", device.ip_address)
+        return None
+    if ip_address in configured:
+        return None
+    if ip_address == device.ip_address:
+        return device
+    return replace(device, ip_address=ip_address)
+
+
+def _new_discovered_devices(
+    discovered: list[DiscoveredDevice], configured: list[str]
+) -> list[DiscoveredDevice]:
+    """Return discovered devices that are not configured yet, sorted by IP."""
+    configured_addresses = set(configured)
+    new_devices: list[DiscoveredDevice] = []
+    seen: set[str] = set()
+    for device in discovered:
+        normalized = _normalize_discovered_device(device, configured_addresses)
+        if normalized is None or normalized.ip_address in seen:
+            continue
+        seen.add(normalized.ip_address)
+        new_devices.append(normalized)
+    return sorted(new_devices, key=lambda device: device.sort_key)
+
+
+def _discovery_event(device: DiscoveredDevice) -> str:
+    """Serialize a discovered device as a newline-delimited JSON event."""
+    return (
+        json.dumps(
+            {
+                "ip_address": device.ip_address,
+                "name": device.name,
+                "details": device.details,
+                "sort_key": device.sort_key_text,
+            }
+        )
+        + "\n"
+    )
+
+
+def _discover_stream(configured: list[str]) -> Iterator[str]:
+    """Stream newly discovered devices as newline-delimited JSON."""
+    configured_addresses = set(configured)
+    seen: set[str] = set()
+    try:
+        for device in iter_shelly_device_details(timeout=_DISCOVERY_TIMEOUT):
+            normalized = _normalize_discovered_device(device, configured_addresses)
+            if normalized is None or normalized.ip_address in seen:
+                continue
+            seen.add(normalized.ip_address)
+            yield _discovery_event(normalized)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Device discovery failed")
+        yield (
+            json.dumps(
+                {
+                    "error": (
+                        "Unable to discover devices. Check the server logs and try again."
+                    )
+                }
+            )
+            + "\n"
+        )
+
+
+def _saved_ip_addresses(store: BackupStore) -> list[str]:
+    """Return valid device IP addresses saved via the web UI."""
+    saved = store.get_settings().get("ip_addresses")
+    if not isinstance(saved, list):
+        return []
+    ip_addresses: list[str] = []
+    for value in saved:
+        try:
+            ip_addresses.append(str(ipaddress.ip_address(str(value))))
+        except ValueError:
+            _LOGGER.warning("Ignoring invalid saved device IP address: %r", value)
+    return ip_addresses
+
+
+def _save_device_ip_addresses(store: BackupStore, raw_values: list[str]) -> str | None:
+    """Add submitted device addresses and return an error message if invalid."""
+    if not raw_values:
+        return "Select at least one device to add."
+    try:
+        new_ip_addresses = _parse_ip_addresses("\n".join(raw_values))
+    except ValueError:
+        return (
+            "Enter valid IPv4 or IPv6 addresses, one per line or separated by commas."
+        )
+    settings = store.get_settings()
+    ip_addresses = _saved_ip_addresses(store)
+    for ip_address in new_ip_addresses:
+        if ip_address not in ip_addresses:
+            ip_addresses.append(ip_address)
+    settings["ip_addresses"] = ip_addresses
+    store.save_settings(settings)
+    return None
+
+
+def _effective_ip_addresses(
+    configuration: Configuration, store: BackupStore
+) -> list[str] | None:
+    """Return the devices to use for scheduled backups."""
+    saved = _saved_ip_addresses(store)
+    if saved:
+        return saved
+    return configuration.ip_addresses()
+
+
 templates.env.filters["format_timestamp"] = _format_timestamp
 templates.env.filters["format_interval"] = _format_interval
 
@@ -121,6 +260,14 @@ def _registered_ip_addresses(store: BackupStore) -> list[str] | None:
     return [str(device["ip_address"]) for device in store.devices()] or None
 
 
+def _manual_backup_ip_addresses(store: BackupStore) -> list[str] | None:
+    """Return the devices to use for a global manual backup."""
+    saved = _saved_ip_addresses(store)
+    if saved:
+        return saved
+    return _registered_ip_addresses(store)
+
+
 def _register_device_backup_route(
     app: FastAPI, store: BackupStore, scheduler: BackupScheduler
 ) -> None:
@@ -148,7 +295,9 @@ def _register_backup_routes(
     async def trigger_backup(background_tasks: BackgroundTasks, redirect: str = "/"):
         """Back up all registered devices in the background."""
         scheduler.queue()
-        background_tasks.add_task(scheduler.run_once, _registered_ip_addresses(store))
+        background_tasks.add_task(
+            scheduler.run_once, _manual_backup_ip_addresses(store)
+        )
         parsed_redirect = URL(redirect)
         path = parsed_redirect.path
         target = (
@@ -175,23 +324,151 @@ def _register_backup_routes(
         return _scheduler_status(scheduler, store)
 
 
+def _settings_context(
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+    **overrides: object,
+) -> dict[str, object]:
+    """Build the template context for the settings page."""
+    context: dict[str, object] = {
+        "interval": scheduler.interval,
+        "interval_value": _format_interval_value(scheduler.interval),
+        "next_run": scheduler.next_run,
+        "ip_addresses": _saved_ip_addresses(store),
+        "ip_addresses_value": "",
+        "fallback_ip_addresses": configuration.ip_addresses() or [],
+        "discover": configuration.discover(),
+        "discovered_devices": [],
+        "discovery_ran": False,
+        "discovery_error": None,
+        "saved": False,
+    }
+    context.update(overrides)
+    return context
+
+
+def _render_settings(
+    request: Request,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+    *,
+    status_code: int = 200,
+    **overrides: object,
+):
+    """Render the settings page with the current settings."""
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        status_code=status_code,
+        context=_settings_context(configuration, store, scheduler, **overrides),
+    )
+
+
+def _register_device_settings_routes(
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+) -> None:
+    """Register the device management routes on the settings page."""
+
+    @app.post("/settings/discover")
+    async def discover_devices(request: Request):
+        """Discover Shelly devices and offer the ones not added yet."""
+        try:
+            discovered = await asyncio.to_thread(
+                discover_shelly_device_details, timeout=_DISCOVERY_TIMEOUT
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Device discovery failed")
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                discovery_error=(
+                    "Unable to discover devices. Check the server logs and try again."
+                ),
+            )
+        discovered_devices = _new_discovered_devices(
+            discovered, _saved_ip_addresses(store)
+        )
+        return _render_settings(
+            request,
+            configuration,
+            store,
+            scheduler,
+            discovered_devices=discovered_devices,
+            discovery_ran=True,
+        )
+
+    @app.post("/settings/discover/stream")
+    async def discover_devices_stream():
+        """Stream newly discovered devices as newline-delimited JSON."""
+        return StreamingResponse(
+            _discover_stream(_saved_ip_addresses(store)),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post("/settings/devices")
+    async def add_devices(request: Request):
+        """Add one or more device IP addresses to the settings."""
+        body = (await request.body()).decode("utf-8", errors="replace")
+        raw_values = parse_qs(body).get("ip_addresses", [])
+        error = _save_device_ip_addresses(store, raw_values)
+        if error:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                ip_addresses_value="\n".join(raw_values),
+                error=error,
+            )
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+    @app.post("/settings/devices/remove")
+    async def remove_device(request: Request):
+        """Remove a device IP address from the settings."""
+        body = (await request.body()).decode("utf-8", errors="replace")
+        raw_ip_address = parse_qs(body).get("ip_address", [""])[0]
+        try:
+            ip_address = str(ipaddress.ip_address(raw_ip_address.strip()))
+        except ValueError:
+            ip_address = raw_ip_address.strip()
+        settings = store.get_settings()
+        ip_addresses = _saved_ip_addresses(store)
+        if ip_address in ip_addresses:
+            ip_addresses.remove(ip_address)
+        settings["ip_addresses"] = ip_addresses
+        store.save_settings(settings)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+
 def _register_settings_routes(
-    app: FastAPI, store: BackupStore, scheduler: BackupScheduler
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
 ) -> None:
     """Register the settings page routes."""
 
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         """Show the application settings form."""
-        return templates.TemplateResponse(
-            request=request,
-            name="settings.html",
-            context={
-                "interval": scheduler.interval,
-                "interval_value": _format_interval_value(scheduler.interval),
-                "next_run": scheduler.next_run,
-                "saved": request.query_params.get("saved") == "1",
-            },
+        return _render_settings(
+            request,
+            configuration,
+            store,
+            scheduler,
+            saved=request.query_params.get("saved") == "1",
         )
 
     @app.post("/settings")
@@ -202,19 +479,17 @@ def _register_settings_routes(
         try:
             interval = parse_interval(raw_interval)
         except TypeError, ValueError:
-            return templates.TemplateResponse(
-                request=request,
-                name="settings.html",
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
                 status_code=400,
-                context={
-                    "interval": scheduler.interval,
-                    "interval_value": raw_interval,
-                    "next_run": scheduler.next_run,
-                    "error": (
-                        "Enter a valid interval such as 30m, 1h, or 1d. "
-                        "Use 0 to disable automatic backups."
-                    ),
-                },
+                interval_value=raw_interval,
+                error=(
+                    "Enter a valid interval such as 30m, 1h, or 1d. "
+                    "Use 0 to disable automatic backups."
+                ),
             )
         settings = store.get_settings()
         settings["interval"] = interval
@@ -222,9 +497,14 @@ def _register_settings_routes(
         await scheduler.set_interval(interval)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
+    _register_device_settings_routes(app, configuration, store, scheduler)
+
 
 def _register_routes(
-    app: FastAPI, store: BackupStore, scheduler: BackupScheduler
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
 ) -> None:
     """Register the web routes on the application."""
 
@@ -290,7 +570,7 @@ def _register_routes(
         )
 
     _register_backup_routes(app, store, scheduler)
-    _register_settings_routes(app, store, scheduler)
+    _register_settings_routes(app, configuration, store, scheduler)
 
 
 def create_app(
@@ -304,6 +584,7 @@ def create_app(
     scheduler = scheduler or BackupScheduler(
         Backup(configuration, store=store),
         _effective_interval(configuration, store),
+        ip_addresses_provider=lambda: _effective_ip_addresses(configuration, store),
     )
 
     @asynccontextmanager
@@ -318,7 +599,7 @@ def create_app(
     app.state.configuration = configuration
     app.state.store = store
     app.state.scheduler = scheduler
-    _register_routes(app, store, scheduler)
+    _register_routes(app, configuration, store, scheduler)
     return app
 
 

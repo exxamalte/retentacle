@@ -1,6 +1,9 @@
 """mDNS discovery for Shelly devices."""
 
+from collections.abc import Iterator
 import contextlib
+from dataclasses import dataclass
+import ipaddress
 import logging
 import time
 
@@ -11,13 +14,115 @@ from .consts import SHELLY_HTTP_MDNS_SERVICE_TYPE, SHELLY_MDNS_SERVICE_TYPE
 _LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class DiscoveredDevice:
+    """Details about a Shelly device found via mDNS."""
+
+    ip_address: str
+    name: str = ""
+    model: str = ""
+    generation: int | None = None
+    version: str = ""
+
+    @property
+    def details(self) -> str:
+        """Return a compact summary of the device metadata."""
+        parts = [self.model]
+        if self.generation is not None:
+            parts.append(f"gen {self.generation}")
+        if self.version:
+            parts.append(self.version)
+        return " · ".join(part for part in parts if part)
+
+    @property
+    def sort_key(self) -> tuple[int, int]:
+        """Return a key that sorts devices numerically by IP address."""
+        try:
+            address = ipaddress.ip_address(self.ip_address)
+        except ValueError:
+            return (0, 0)
+        return (address.version, int(address))
+
+    @property
+    def sort_key_text(self) -> str:
+        """Return a zero-padded key that sorts correctly as a string."""
+        version, value = self.sort_key
+        return f"{version}:{value:039d}"
+
+
+def _decode(value: object) -> str:
+    """Decode an mDNS text property value."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
+
+
+def _service_properties(info) -> dict[str, str]:
+    """Return the decoded TXT properties of a service."""
+    properties = getattr(info, "properties", None) or {}
+    return {_decode(key).lower(): _decode(value) for key, value in properties.items()}
+
+
+def _first_property(properties: dict[str, str], *keys: str) -> str:
+    """Return the first non-empty value for the given property keys."""
+    for key in keys:
+        value = properties.get(key)
+        if value:
+            return value
+    return ""
+
+
+def _parse_generation(value: str) -> int | None:
+    """Parse a device generation from a TXT property."""
+    try:
+        return int(value)
+    except TypeError, ValueError:
+        return None
+
+
+def _service_display_name(name: str, service_type: str) -> str:
+    """Return a service instance name without its mDNS service suffix."""
+    suffix = f".{service_type}"
+    if name.endswith(suffix):
+        return name[: -len(suffix)]
+    return name.split(".", 1)[0]
+
+
+def _devices_from_service_info(
+    info, service_type: str, service_name: str
+) -> list[DiscoveredDevice]:
+    """Build discovered device details from a resolved mDNS service."""
+    properties = _service_properties(info)
+    name = _service_display_name(
+        getattr(info, "name", "") or service_name, service_type
+    )
+    model = _first_property(properties, "model", "app", "product", "type")
+    if not model and name:
+        model = name.split("-", 1)[0]
+    version = _first_property(properties, "ver", "version", "fw_ver", "fw")
+    generation = _parse_generation(properties.get("gen", ""))
+    return [
+        DiscoveredDevice(
+            ip_address=address,
+            name=name,
+            model=model,
+            generation=generation,
+            version=version,
+        )
+        for address in info.parsed_addresses()
+        if address
+    ]
+
+
 class ShellyServiceListener(ServiceListener):
     """Listener for Shelly mDNS services."""
 
     def __init__(self, zc: Zeroconf):
         """Initialise listener."""
         self.zeroconf = zc
-        self.devices = []
+        self.devices: list[DiscoveredDevice] = []
 
     def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Handle service addition."""
@@ -41,17 +146,20 @@ class ShellyServiceListener(ServiceListener):
         return False
 
     def _get_addresses(self, zc: Zeroconf, type_: str, name: str) -> None:
-        """Get IP addresses for a service."""
+        """Get device details for a service."""
         info = zc.get_service_info(type_, name, timeout=5000)
         if info:
-            addresses = info.parsed_addresses()
-            for address in addresses:
-                if address and address not in self.devices:
-                    self.devices.append(address)
-                    _LOGGER.info("Discovered Shelly device at %s", address)
+            known = {device.ip_address for device in self.devices}
+            for device in _devices_from_service_info(info, type_, name):
+                if device.ip_address not in known:
+                    self.devices.append(device)
+                    known.add(device.ip_address)
+                    _LOGGER.info("Discovered Shelly device at %s", device.ip_address)
 
 
-def _collect_from_browser(zeroconf, browser, devices_set, devices_ordered):
+def _collect_from_browser(
+    zeroconf, browser, devices: dict[str, DiscoveredDevice]
+) -> None:
     try:
         services = getattr(browser, "services", None)
         if not services:
@@ -68,19 +176,23 @@ def _collect_from_browser(zeroconf, browser, devices_set, devices_ordered):
                     service_type, service_name, timeout=3000
                 )
                 if info:
-                    for addr in info.parsed_addresses():
-                        if addr and addr not in devices_set:
-                            devices_set.add(addr)
-                            devices_ordered.append(addr)
-                            _LOGGER.info("Discovered Shelly device at %s", addr)
+                    for device in _devices_from_service_info(
+                        info, service_type, service_name
+                    ):
+                        if device.ip_address not in devices:
+                            devices[device.ip_address] = device
+                            _LOGGER.info(
+                                "Discovered Shelly device at %s", device.ip_address
+                            )
     except OSError, RuntimeError:
         pass
 
 
-def discover_shelly_devices(timeout: float = 60.0) -> list[str]:
-    """Discover Shelly devices on the network via mDNS."""
-    devices_set: set[str] = set()
-    devices_ordered: list[str] = []
+def iter_shelly_device_details(
+    timeout: float = 60.0,
+) -> Iterator[DiscoveredDevice]:
+    """Yield Shelly devices as they are discovered on the network via mDNS."""
+    devices: dict[str, DiscoveredDevice] = {}
 
     zeroconf = Zeroconf()
     listener = ShellyServiceListener(zeroconf)
@@ -92,15 +204,28 @@ def discover_shelly_devices(timeout: float = 60.0) -> list[str]:
         )
         for _ in range(int(timeout)):
             time.sleep(1)
-            for addr in listener.devices:
-                if addr and addr not in devices_set:
-                    devices_set.add(addr)
-                    devices_ordered.append(addr)
-                    _LOGGER.info("Discovered Shelly device at %s", addr)
+            for device in listener.devices:
+                if device.ip_address and device.ip_address not in devices:
+                    devices[device.ip_address] = device
+                    yield device
             for browser in browsers:
-                _collect_from_browser(zeroconf, browser, devices_set, devices_ordered)
+                known = set(devices)
+                _collect_from_browser(zeroconf, browser, devices)
+                for ip_address, device in devices.items():
+                    if ip_address not in known:
+                        yield device
     finally:
         with contextlib.suppress(OSError, RuntimeError):
             zeroconf.close()
 
-    return devices_ordered
+
+def discover_shelly_device_details(timeout: float = 60.0) -> list[DiscoveredDevice]:
+    """Discover Shelly devices on the network via mDNS."""
+    return sorted(
+        iter_shelly_device_details(timeout), key=lambda device: device.sort_key
+    )
+
+
+def discover_shelly_devices(timeout: float = 60.0) -> list[str]:
+    """Discover Shelly device IP addresses on the network via mDNS."""
+    return [device.ip_address for device in discover_shelly_device_details(timeout)]

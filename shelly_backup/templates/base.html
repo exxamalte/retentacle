@@ -252,6 +252,49 @@
       margin-bottom: 1.25rem;
     }
 
+    .settings-card h2 {
+      margin-bottom: 0.35rem;
+    }
+
+    .device-form {
+      margin-top: 1rem;
+    }
+
+    textarea.input {
+      min-height: 5rem;
+      resize: vertical;
+    }
+
+    .device-discovery {
+      margin-top: 1rem;
+      align-items: flex-start;
+    }
+
+    .device-discovery .field-help {
+      flex-basis: 100%;
+    }
+
+    .device-form h2 {
+      margin-top: 0;
+    }
+
+    .discovery-status {
+      margin-top: 0.5rem;
+    }
+
+    .checkbox-cell {
+      width: 1%;
+      white-space: nowrap;
+    }
+
+    .checkbox-cell input[type="checkbox"] {
+      width: 1.05rem;
+      height: 1.05rem;
+      margin: 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
     .form-field {
       display: flex;
       flex-direction: column;
@@ -406,6 +449,11 @@
 
     .device-name {
       font-weight: 650;
+    }
+
+    .device-meta {
+      color: var(--muted);
+      font-size: 0.82rem;
     }
 
     .device-ip {
@@ -731,5 +779,6 @@
       poll();
     })();
   </script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
