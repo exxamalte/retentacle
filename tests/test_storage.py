@@ -311,3 +311,48 @@ class TestBackupStore:
                 )
 
             assert len(store.all()) == 10
+
+    def test_settings_without_database(self):
+        """Test reading settings from a database that does not exist yet."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "missing.json")
+
+            assert store.get_settings() == {}
+
+    def test_save_and_get_settings(self):
+        """Test that settings persist across store instances."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "shelly_backup.json"
+            store = BackupStore(path)
+            store.save_settings({"interval": 1800, "future_setting": True})
+
+            assert store.get_settings() == {
+                "interval": 1800,
+                "future_setting": True,
+            }
+            assert BackupStore(path).get_settings() == {
+                "interval": 1800,
+                "future_setting": True,
+            }
+
+    def test_save_settings_replaces_previous_values(self):
+        """Test that saving settings replaces previously stored values."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store.save_settings({"interval": 1800, "future_setting": True})
+
+            store.save_settings({"interval": 900})
+
+            assert store.get_settings() == {"interval": 900}
+
+    def test_settings_do_not_affect_backups(self):
+        """Test that settings and backup records are stored separately."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            record = _record()
+            store.add(record)
+            store.save_settings({"interval": 1800})
+
+            assert store.get_settings() == {"interval": 1800}
+            assert store.all() == [{**record, "doc_id": 1}]
+            assert len(store.devices()) == 1

@@ -1,7 +1,7 @@
 """Tests for the backup scheduler."""
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 import threading
 import time
 from unittest.mock import ANY, AsyncMock, Mock, patch
@@ -370,3 +370,80 @@ class TestBackupScheduler:
         await scheduler.stop()
 
         assert scheduler.started is False
+
+    @pytest.mark.asyncio
+    async def test_set_interval_disables_scheduler(self):
+        """Test that setting a zero interval disables automatic backups."""
+        scheduler = BackupScheduler(Mock(), 60)
+
+        await scheduler.set_interval(0)
+
+        assert scheduler.interval == 0
+        assert scheduler.enabled is False
+        assert scheduler.next_run is None
+        assert scheduler.started is False
+
+    @pytest.mark.asyncio
+    async def test_set_interval_updates_next_run(self):
+        """Test that changing the interval updates the next run time."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(backup, 3600)
+
+        await scheduler.start()
+        try:
+            await scheduler.set_interval(120)
+
+            assert scheduler.interval == 120
+            assert scheduler.next_run is not None
+            assert (
+                datetime.now(UTC) - timedelta(seconds=5)
+                <= scheduler.next_run
+                <= datetime.now(UTC) + timedelta(seconds=120)
+            )
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_set_interval_starts_disabled_scheduler(self):
+        """Test that enabling a disabled scheduler starts it."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(backup, 0)
+
+        await scheduler.set_interval(0.01)
+        try:
+            for _ in range(200):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.01)
+
+            assert scheduler.started is True
+            assert scheduler.run_count == 1
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_set_interval_reschedules_running_scheduler(self):
+        """Test that a changed interval takes effect without a restart."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(backup, 3600)
+
+        await scheduler.start()
+        try:
+            for _ in range(200):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.01)
+            assert scheduler.run_count == 1
+
+            await scheduler.set_interval(0.01)
+
+            for _ in range(200):
+                if scheduler.run_count >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert scheduler.run_count >= 2
+        finally:
+            await scheduler.stop()

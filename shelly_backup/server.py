@@ -3,8 +3,9 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import json
+import logging
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -13,10 +14,12 @@ from starlette.datastructures import URL
 import uvicorn
 
 from .backup import Backup
-from .configuration import Configuration
+from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
+
+_LOGGER = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
@@ -56,6 +59,35 @@ def _format_interval(seconds: float) -> str:
             suffix = "" if value == 1 else "s"
             parts.append(f"{value} {unit_name}{suffix}")
     return " ".join(parts)
+
+
+def _format_interval_value(seconds: float) -> str:
+    """Format an interval as a compact value for a form field."""
+    remaining = int(seconds)
+    if remaining <= 0:
+        return "0"
+    for unit_seconds, suffix in (
+        (24 * 60 * 60, "d"),
+        (60 * 60, "h"),
+        (60, "m"),
+        (1, "s"),
+    ):
+        if remaining % unit_seconds == 0:
+            return f"{remaining // unit_seconds}{suffix}"
+    return str(remaining)
+
+
+def _effective_interval(configuration: Configuration, store: BackupStore) -> int:
+    """Return the backup interval, preferring settings saved via the web UI."""
+    saved_interval = store.get_settings().get("interval")
+    if saved_interval is not None:
+        try:
+            return parse_interval(saved_interval)
+        except TypeError, ValueError:
+            _LOGGER.warning(
+                "Ignoring invalid saved backup interval: %r", saved_interval
+            )
+    return configuration.interval()
 
 
 templates.env.filters["format_timestamp"] = _format_timestamp
@@ -143,6 +175,54 @@ def _register_backup_routes(
         return _scheduler_status(scheduler, store)
 
 
+def _register_settings_routes(
+    app: FastAPI, store: BackupStore, scheduler: BackupScheduler
+) -> None:
+    """Register the settings page routes."""
+
+    @app.get("/settings", response_class=HTMLResponse)
+    async def settings_page(request: Request):
+        """Show the application settings form."""
+        return templates.TemplateResponse(
+            request=request,
+            name="settings.html",
+            context={
+                "interval": scheduler.interval,
+                "interval_value": _format_interval_value(scheduler.interval),
+                "next_run": scheduler.next_run,
+                "saved": request.query_params.get("saved") == "1",
+            },
+        )
+
+    @app.post("/settings")
+    async def save_settings(request: Request):
+        """Validate and persist the application settings."""
+        body = (await request.body()).decode("utf-8", errors="replace")
+        raw_interval = parse_qs(body).get("interval", [""])[0]
+        try:
+            interval = parse_interval(raw_interval)
+        except TypeError, ValueError:
+            return templates.TemplateResponse(
+                request=request,
+                name="settings.html",
+                status_code=400,
+                context={
+                    "interval": scheduler.interval,
+                    "interval_value": raw_interval,
+                    "next_run": scheduler.next_run,
+                    "error": (
+                        "Enter a valid interval such as 30m, 1h, or 1d. "
+                        "Use 0 to disable automatic backups."
+                    ),
+                },
+            )
+        settings = store.get_settings()
+        settings["interval"] = interval
+        store.save_settings(settings)
+        await scheduler.set_interval(interval)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+
 def _register_routes(
     app: FastAPI, store: BackupStore, scheduler: BackupScheduler
 ) -> None:
@@ -209,6 +289,7 @@ def _register_routes(
         )
 
     _register_backup_routes(app, store, scheduler)
+    _register_settings_routes(app, store, scheduler)
 
 
 def create_app(
@@ -220,7 +301,8 @@ def create_app(
     configuration = configuration or Configuration()
     store = store or BackupStore(configuration.database_path())
     scheduler = scheduler or BackupScheduler(
-        Backup(configuration, store=store), configuration.interval()
+        Backup(configuration, store=store),
+        _effective_interval(configuration, store),
     )
 
     @asynccontextmanager

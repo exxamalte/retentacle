@@ -78,6 +78,7 @@ The server has no authentication. Only expose it on networks you trust.
 * `/devices/<ip-address>` - all backups for one device, newest first.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
+* `/settings` - configure the backup interval and other server settings.
 * `/api/status` - scheduler status and live backup progress as JSON.
 * `/health` - server and scheduler status as JSON.
 
@@ -90,6 +91,11 @@ for the next scheduled run.
 While a backup is running, the page shows a live progress bar and updates the
 status automatically. Once the run finishes, the page reloads so newly created
 backups appear without a manual refresh.
+
+The **Settings** page lets you change the backup interval while the server is
+running. Changes take effect immediately and are stored in the TinyDB database,
+so they survive a restart. Settings saved in the web UI take precedence over
+both the configuration file and command line options.
 
 ## One-shot backup
 
@@ -145,7 +151,8 @@ target_folder: backup_folder
 shelly-backup --configuration configuration.yaml
 ```
 
-Configuration file values take precedence over command line options.
+Configuration file values take precedence over command line options. Settings
+saved in the web UI take precedence over both.
 
 ## Database
 

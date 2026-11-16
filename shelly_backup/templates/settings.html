@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Settings</h1>
+      <p class="subtitle">
+        Configure automatic backups and other server behaviour.
+      </p>
+    </div>
+  </div>
+
+  {% if saved %}
+    <div class="notice" role="status">
+      Settings saved. The new backup interval is active.
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <div class="alert" role="alert">
+      <strong>Could not save settings:</strong> {{ error }}
+    </div>
+  {% endif %}
+
+  <section class="card settings-card" aria-label="Backup settings">
+    <form method="post" action="/settings">
+      <div class="form-field">
+        <label for="interval">Backup interval</label>
+        <input
+          class="input"
+          id="interval"
+          name="interval"
+          value="{{ interval_value }}"
+          autocomplete="off"
+          spellcheck="false"
+          required
+        >
+        <p class="field-help">
+          How often automatic backups run. Use values such as
+          <span class="mono">30m</span>, <span class="mono">1h</span>, or
+          <span class="mono">1d</span>. Plain seconds are also accepted. Use
+          <span class="mono">0</span> to disable automatic backups.
+        </p>
+      </div>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Save settings</button>
+        <a class="button" href="/">Cancel</a>
+      </div>
+    </form>
+  </section>
+
+  <section class="stat-grid" aria-label="Current schedule">
+    <div class="card">
+      <p class="stat-label">Current interval</p>
+      <p class="stat-value">{{ interval|format_interval }}</p>
+    </div>
+    <div class="card">
+      <p class="stat-label">Status</p>
+      <p class="stat-value">
+        {% if interval <= 0 %}
+          <span class="badge muted">Automatic backups off</span>
+        {% else %}
+          <span class="badge success">Scheduled</span>
+        {% endif %}
+      </p>
+    </div>
+    <div class="card">
+      <p class="stat-label">Next run</p>
+      <p class="stat-value">{{ next_run|format_timestamp }}</p>
+    </div>
+  </section>
+
+  <p class="footer-note">
+    Settings are stored in the backup database and override the configuration
+    file for this server.
+  </p>
+{% endblock %}
