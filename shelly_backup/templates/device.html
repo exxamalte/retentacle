@@ -27,6 +27,15 @@
     </div>
     <div class="header-actions">
       <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
+      {% if web_url %}
+        <a
+          class="button"
+          href="{{ web_url }}"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open the device web UI in a new tab"
+        >Open web UI</a>
+      {% endif %}
       <form method="post" action="/devices/{{ ip_address }}/backup">
         <button class="button primary" type="submit">Back up this device</button>
       </form>

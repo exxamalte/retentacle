@@ -108,6 +108,15 @@
                 <td>
                   <div class="row-actions">
                     <a class="button small" href="/devices/{{ device.ip_address }}">View backups</a>
+                    {% if device.web_url %}
+                      <a
+                        class="button small"
+                        href="{{ device.web_url }}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open the device web UI in a new tab"
+                      >Open web UI</a>
+                    {% endif %}
                     <form method="post" action="/devices/{{ device.ip_address }}/backup?redirect=/">
                       <button class="button small" type="submit">Back up</button>
                     </form>

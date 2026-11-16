@@ -79,7 +79,7 @@ The server has no authentication. Only expose it on networks you trust.
 ### Web UI
 
 * `/` - devices overview with scheduler status, backup counts, last backup times, and per-device indicators for automatic backups and recent backups.
-* `/devices/<ip-address>` - all backups for one device, newest first.
+* `/devices/<ip-address>` - all backups for one device, newest first, plus a link to the device web UI.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
 * `/settings` - configure the backup schedule and device IP addresses.
@@ -98,6 +98,11 @@ Each device in the overview shows whether it is included in automatic backups
 and whether its latest backup is recent. A backup is considered recent when it
 is within the configured automatic backup interval (plus a short grace period),
 or within the last 24 hours when automatic backups are disabled.
+
+Shelly devices usually serve their own configuration page over HTTP, so each
+device has an **Open web UI** link that opens `http://<ip-address>` in a new
+tab. The link uses the device's IP address; the backup tool does not proxy or
+reach the device itself.
 
 While a backup is running, the page shows a live progress bar and updates the
 status automatically. Once the run finishes, the page reloads so newly created

@@ -240,6 +240,32 @@ class TestServer:
             response.text
         )
 
+    def test_index_links_to_device_web_ui(self):
+        """Test the overview opens each device web UI in a new tab."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert 'href="http://192.168.1.10"' in response.text
+        assert 'target="_blank"' in response.text
+        assert 'rel="noopener noreferrer"' in response.text
+        assert "Open web UI" in response.text
+
+    def test_index_links_to_ipv6_device_web_ui(self):
+        """Test IPv6 device web UI links use brackets."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[_record(ip_address="2001:db8::1")],
+            )
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert 'href="http://[2001:db8::1]"' in response.text
+
     def test_index_shows_status_and_backup_started_notice(self):
         """Test the overview page shows scheduler status and the notice."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -407,6 +433,19 @@ class TestServer:
         assert "Back up this device" in response.text
         assert "data-backup-progress" in response.text
         assert 'action="/backup?redirect=/devices/192.168.1.10"' in response.text
+
+    def test_device_page_links_to_web_ui(self):
+        """Test the device page opens its web UI in a new tab."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                response = client.get("/devices/192.168.1.10")
+
+        assert response.status_code == 200
+        assert 'href="http://192.168.1.10"' in response.text
+        assert "Open web UI" in response.text
+        assert 'target="_blank"' in response.text
+        assert 'rel="noopener noreferrer"' in response.text
 
     def test_pages_use_generation_1_configured_name(self):
         """Test that generation 1 devices show their configured name."""

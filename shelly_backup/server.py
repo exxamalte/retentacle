@@ -341,6 +341,16 @@ def _normalized_ip_address(value: object) -> str:
         return str(value)
 
 
+def _device_web_url(value: object) -> str | None:
+    """Return the device's HTTP web UI URL, if its address is valid."""
+    try:
+        ip_address = ipaddress.ip_address(str(value))
+    except ValueError:
+        return None
+    host = f"[{ip_address}]" if ip_address.version == 6 else str(ip_address)
+    return f"http://{host}"
+
+
 def _record_timestamp(record: dict[str, object]) -> datetime | None:
     """Return a backup record's timestamp in UTC, if valid."""
     value = record.get("timestamp")
@@ -384,6 +394,7 @@ def _device_overviews(
         overview = dict(device)
         ip_address = _normalized_ip_address(device.get("ip_address", ""))
         overview["automatic"] = ip_address in automatic_ip_addresses
+        overview["web_url"] = _device_web_url(device.get("ip_address"))
         latest = device.get("latest")
         timestamp = _record_timestamp(latest) if isinstance(latest, dict) else None
         overview["recent"] = None if timestamp is None else timestamp >= cutoff
@@ -796,6 +807,7 @@ def _register_routes(
                 "ip_address": ip_address,
                 "display_name": device_display_name(latest),
                 "backups": backups,
+                "web_url": _device_web_url(ip_address),
             },
         )
 
