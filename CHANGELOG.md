@@ -5,6 +5,7 @@
 * Add a web UI for browsing backups per device and viewing raw backup data.
 * Add a manual per-device backup action on the device detail page.
 * Add per-device backup buttons to the device overview.
+* Restrict backup redirects to known application pages.
 * Make the global "Run backup now" action back up all registered devices.
 * Add a live backup progress bar and automatic page refresh when a run finishes.
 * Show configured device names for generation 1 devices.

@@ -9,7 +9,8 @@ import ipaddress
 import json
 import logging
 from pathlib import Path
-from urllib.parse import parse_qs, quote
+import re
+from urllib.parse import parse_qs, quote, urlsplit
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import (
@@ -19,7 +20,6 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.templating import Jinja2Templates
-from starlette.datastructures import URL
 import uvicorn
 
 from .backup import Backup
@@ -372,20 +372,26 @@ def _manual_backup_ip_addresses(store: BackupStore) -> list[str] | None:
     return _registered_ip_addresses(store)
 
 
+_DEVICE_REDIRECT_PATTERN = re.compile(r"/devices/(?P<ip_address>[^/]+)")
+_BACKUP_REDIRECT_PATTERN = re.compile(r"/backups/(?P<doc_id>[0-9]+)")
+
+
 def _safe_redirect_path(value: str, default: str = "/") -> str:
-    """Return a safe in-application redirect path or the default."""
-    parsed_redirect = URL(value)
+    """Return an allowlisted in-application redirect path or the default."""
+    parsed_redirect = urlsplit(value)
+    if parsed_redirect.scheme or parsed_redirect.netloc:
+        return default
     path = parsed_redirect.path
-    if (
-        not parsed_redirect.scheme
-        and not parsed_redirect.netloc
-        and path.startswith("/")
-        and not path.startswith("//")
-        and "\\" not in path
-        and "\r" not in path
-        and "\n" not in path
-    ):
-        return path
+    if path == "/":
+        return "/"
+    if path == "/settings":
+        return "/settings"
+    device_match = _DEVICE_REDIRECT_PATTERN.fullmatch(path)
+    if device_match:
+        return "/devices/" + quote(device_match.group("ip_address"), safe="")
+    backup_match = _BACKUP_REDIRECT_PATTERN.fullmatch(path)
+    if backup_match:
+        return "/backups/" + quote(backup_match.group("doc_id"), safe="")
     return default
 
 
@@ -397,12 +403,15 @@ def _register_device_backup_route(
     @app.post("/devices/{ip_address}/backup")
     async def backup_device(ip_address: str, redirect: str = ""):
         """Back up a single device and return to the requesting page."""
-        if not store.by_device(ip_address):
+        records = store.by_device(ip_address)
+        if not records:
             raise HTTPException(status_code=404, detail="Device not found")
         success = await scheduler.run_device(ip_address)
         result = "backup_done" if success else "backup_failed"
-        safe_ip_address = quote(ip_address, safe="")
-        target = _safe_redirect_path(redirect, f"/devices/{safe_ip_address}")
+        stored_ip_address = str(records[0].get("ip_address", ip_address))
+        target = _safe_redirect_path(
+            redirect, "/devices/" + quote(stored_ip_address, safe="")
+        )
         return RedirectResponse(url=f"{target}?{result}=1", status_code=303)
 
 

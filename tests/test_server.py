@@ -484,6 +484,21 @@ class TestServer:
         assert response.status_code == 303
         assert response.headers["location"] == "/devices/192.168.1.10?backup_done=1"
 
+    def test_manual_device_backup_rejects_unknown_page(self):
+        """Test that a device backup only redirects to known pages."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_device = AsyncMock(return_value=True)
+                response = client.post(
+                    "/devices/192.168.1.10/backup?redirect=/admin",
+                    follow_redirects=False,
+                )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/devices/192.168.1.10?backup_done=1"
+
     def test_overview_shows_manual_backup_result(self):
         """Test the overview shows manual backup results."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -617,6 +632,36 @@ class TestServer:
 
         assert response.status_code == 303
         assert response.headers["location"] == "/devices/192.168.1.10?backup_started=1"
+
+    def test_trigger_backup_returns_to_settings(self):
+        """Test that triggering a backup can return to the settings page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post(
+                    "/backup?redirect=/settings",
+                    follow_redirects=False,
+                )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/settings?backup_started=1"
+
+    def test_trigger_backup_rejects_unknown_page(self):
+        """Test that triggering a backup only redirects to known pages."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post(
+                    "/backup?redirect=/admin",
+                    follow_redirects=False,
+                )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/?backup_started=1"
 
     @pytest.mark.parametrize(
         "redirect",
