@@ -115,6 +115,57 @@
       </p>
     {% endif %}
 
+    <div class="form-actions device-discovery">
+      <form method="post" action="/settings/discover">
+        <button class="button" type="submit">Discover devices</button>
+      </form>
+      <p class="field-help">
+        Scan the network via mDNS. Only devices not already added are shown.
+      </p>
+    </div>
+
+    {% if discovery_error %}
+      <div class="alert" role="alert">
+        <strong>Discovery failed:</strong> {{ discovery_error }}
+      </div>
+    {% elif discovery_ran %}
+      {% if discovered_ip_addresses %}
+        <form method="post" action="/settings/devices" class="device-form">
+          <h2>New devices found</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col"><span class="sr-only">Add</span></th>
+                  <th scope="col">IP address</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for ip_address in discovered_ip_addresses %}
+                  <tr>
+                    <td class="checkbox-cell">
+                      <input
+                        type="checkbox"
+                        name="ip_addresses"
+                        value="{{ ip_address }}"
+                        checked
+                      >
+                    </td>
+                    <td><span class="device-ip">{{ ip_address }}</span></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="form-actions">
+            <button class="button primary" type="submit">Add selected devices</button>
+          </div>
+        </form>
+      {% else %}
+        <p class="field-help">No new devices found.</p>
+      {% endif %}
+    {% endif %}
+
     <form method="post" action="/settings/devices" class="device-form">
       <div class="form-field">
         <label for="ip_addresses">Add device IP addresses</label>

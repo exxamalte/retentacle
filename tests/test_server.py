@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
+from urllib.parse import urlencode
 
 from fastapi.testclient import TestClient
 import pytest
@@ -738,6 +739,21 @@ class TestServer:
             assert "192.168.1.10\nnot-an-ip" in response.text
             assert store.get_settings() == {}
 
+    def test_add_devices_requires_a_selection(self):
+        """Test that an empty device selection is rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/devices",
+                    content=b"",
+                    headers={"content-type": "application/x-www-form-urlencoded"},
+                )
+
+            assert response.status_code == 400
+            assert "Select at least one device to add." in response.text
+            assert store.get_settings() == {}
+
     def test_remove_device(self):
         """Test removing a device IP address."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -760,6 +776,111 @@ class TestServer:
             assert store.get_settings() == {
                 "interval": 3600,
                 "ip_addresses": ["192.168.1.11"],
+            }
+
+    def test_discover_devices_offers_new_devices(self):
+        """Test that discovery offers devices that are not configured yet."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["192.168.1.10"]})
+            with (
+                patch(
+                    "shelly_backup.server.discover_shelly_devices",
+                    return_value=[
+                        "192.168.1.10",
+                        "192.168.1.11",
+                        "2001:0db8::0001",
+                    ],
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.post("/settings/discover")
+
+        assert response.status_code == 200
+        assert "New devices found" in response.text
+        assert response.text.count('type="checkbox"\n') == 2
+        assert 'value="192.168.1.11"' in response.text
+        assert 'value="2001:db8::1"' in response.text
+        assert "No new devices found." not in response.text
+
+    def test_discover_devices_reports_when_nothing_is_new(self):
+        """Test that discovery reports when all found devices are configured."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["192.168.1.10"]})
+            with (
+                patch(
+                    "shelly_backup.server.discover_shelly_devices",
+                    return_value=["192.168.1.10"],
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.post("/settings/discover")
+
+        assert response.status_code == 200
+        assert "No new devices found." in response.text
+        assert 'type="checkbox"\n' not in response.text
+
+    def test_discover_devices_handles_errors(self):
+        """Test that discovery errors are shown without breaking the page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with (
+                patch(
+                    "shelly_backup.server.discover_shelly_devices",
+                    side_effect=RuntimeError("discovery failed"),
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.post("/settings/discover")
+
+        assert response.status_code == 200
+        assert "Discovery failed" in response.text
+        assert "Unable to discover devices" in response.text
+
+    def test_discover_devices_normalizes_and_deduplicates(self):
+        """Test that discovered devices are normalized and deduplicated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with (
+                patch(
+                    "shelly_backup.server.discover_shelly_devices",
+                    return_value=[
+                        "192.168.1.11",
+                        "192.168.1.11",
+                        "2001:0db8::0001",
+                        "not-an-ip",
+                    ],
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.post("/settings/discover")
+
+        assert response.status_code == 200
+        assert response.text.count('type="checkbox"\n') == 2
+        assert 'value="2001:db8::1"' in response.text
+        assert "not-an-ip" not in response.text
+
+    def test_add_devices_from_discovery_selection(self):
+        """Test adding multiple devices selected from discovery results."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings/devices",
+                    content=urlencode(
+                        [
+                            ("ip_addresses", "192.168.1.10"),
+                            ("ip_addresses", "2001:0db8::0001"),
+                        ]
+                    ),
+                    headers={"content-type": "application/x-www-form-urlencoded"},
+                    follow_redirects=False,
+                )
+
+            assert response.status_code == 303
+            assert store.get_settings() == {
+                "ip_addresses": ["192.168.1.10", "2001:db8::1"]
             }
 
     def test_trigger_backup_uses_saved_devices(self):

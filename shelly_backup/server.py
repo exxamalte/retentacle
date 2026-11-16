@@ -1,5 +1,6 @@
 """Web server for browsing and scheduling Shelly backups."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import ipaddress
@@ -17,12 +18,14 @@ import uvicorn
 from .backup import Backup
 from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME
+from .discovery import discover_shelly_devices
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
 
 _LOGGER = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
+_DISCOVERY_TIMEOUT = 5.0
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 templates.env.globals["application_name"] = APPLICATION_NAME
 
@@ -99,6 +102,26 @@ def _parse_ip_addresses(value: str) -> list[str]:
     return [str(ipaddress.ip_address(candidate)) for candidate in candidates]
 
 
+def _new_discovered_ip_addresses(
+    discovered: list[str], configured: list[str]
+) -> list[str]:
+    """Return normalized discovered addresses that are not configured yet."""
+    configured_addresses = set(configured)
+    new_ip_addresses: list[str] = []
+    for value in discovered:
+        try:
+            ip_address = str(ipaddress.ip_address(str(value)))
+        except ValueError:
+            _LOGGER.warning("Ignoring invalid discovered IP address: %r", value)
+            continue
+        if (
+            ip_address not in configured_addresses
+            and ip_address not in new_ip_addresses
+        ):
+            new_ip_addresses.append(ip_address)
+    return new_ip_addresses
+
+
 def _saved_ip_addresses(store: BackupStore) -> list[str]:
     """Return valid device IP addresses saved via the web UI."""
     saved = store.get_settings().get("ip_addresses")
@@ -111,6 +134,26 @@ def _saved_ip_addresses(store: BackupStore) -> list[str]:
         except ValueError:
             _LOGGER.warning("Ignoring invalid saved device IP address: %r", value)
     return ip_addresses
+
+
+def _save_device_ip_addresses(store: BackupStore, raw_values: list[str]) -> str | None:
+    """Add submitted device addresses and return an error message if invalid."""
+    if not raw_values:
+        return "Select at least one device to add."
+    try:
+        new_ip_addresses = _parse_ip_addresses("\n".join(raw_values))
+    except ValueError:
+        return (
+            "Enter valid IPv4 or IPv6 addresses, one per line or separated by commas."
+        )
+    settings = store.get_settings()
+    ip_addresses = _saved_ip_addresses(store)
+    for ip_address in new_ip_addresses:
+        if ip_address not in ip_addresses:
+            ip_addresses.append(ip_address)
+    settings["ip_addresses"] = ip_addresses
+    store.save_settings(settings)
+    return None
 
 
 def _effective_ip_addresses(
@@ -233,6 +276,9 @@ def _settings_context(
         "ip_addresses_value": "",
         "fallback_ip_addresses": configuration.ip_addresses() or [],
         "discover": configuration.discover(),
+        "discovered_ip_addresses": [],
+        "discovery_ran": False,
+        "discovery_error": None,
         "saved": False,
     }
     context.update(overrides)
@@ -265,33 +311,52 @@ def _register_device_settings_routes(
 ) -> None:
     """Register the device management routes on the settings page."""
 
+    @app.post("/settings/discover")
+    async def discover_devices(request: Request):
+        """Discover Shelly devices and offer the ones not added yet."""
+        try:
+            discovered = await asyncio.to_thread(
+                discover_shelly_devices, timeout=_DISCOVERY_TIMEOUT
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Device discovery failed")
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                discovery_error=(
+                    "Unable to discover devices. Check the server logs and try again."
+                ),
+            )
+        discovered_ip_addresses = _new_discovered_ip_addresses(
+            discovered, _saved_ip_addresses(store)
+        )
+        return _render_settings(
+            request,
+            configuration,
+            store,
+            scheduler,
+            discovered_ip_addresses=discovered_ip_addresses,
+            discovery_ran=True,
+        )
+
     @app.post("/settings/devices")
     async def add_devices(request: Request):
         """Add one or more device IP addresses to the settings."""
         body = (await request.body()).decode("utf-8", errors="replace")
-        raw_ip_addresses = parse_qs(body).get("ip_addresses", [""])[0]
-        try:
-            new_ip_addresses = _parse_ip_addresses(raw_ip_addresses)
-        except ValueError:
+        raw_values = parse_qs(body).get("ip_addresses", [])
+        error = _save_device_ip_addresses(store, raw_values)
+        if error:
             return _render_settings(
                 request,
                 configuration,
                 store,
                 scheduler,
                 status_code=400,
-                ip_addresses_value=raw_ip_addresses,
-                error=(
-                    "Enter valid IPv4 or IPv6 addresses, one per line or "
-                    "separated by commas."
-                ),
+                ip_addresses_value="\n".join(raw_values),
+                error=error,
             )
-        settings = store.get_settings()
-        ip_addresses = _saved_ip_addresses(store)
-        for ip_address in new_ip_addresses:
-            if ip_address not in ip_addresses:
-                ip_addresses.append(ip_address)
-        settings["ip_addresses"] = ip_addresses
-        store.save_settings(settings)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
     @app.post("/settings/devices/remove")
