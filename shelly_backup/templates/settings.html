@@ -22,26 +22,78 @@
     </div>
   {% endif %}
 
-  <section class="card settings-card" aria-label="Backup settings">
-    <form method="post" action="/settings">
-      <div class="form-field">
-        <label for="interval">Backup interval</label>
-        <input
-          class="input"
-          id="interval"
-          name="interval"
-          value="{{ interval_value }}"
-          autocomplete="off"
-          spellcheck="false"
-          required
-        >
+  <section class="card settings-card" aria-label="Backup schedule">
+    <form method="post" action="/settings" data-schedule-form>
+      <div class="form-field toggle-field">
+        <label class="checkbox-label" for="automatic_backups">
+          <input
+            type="checkbox"
+            id="automatic_backups"
+            name="automatic_backups"
+            value="on"
+            {% if automatic_backups %}checked{% endif %}
+          >
+          <span>Enable automatic backups</span>
+        </label>
         <p class="field-help">
-          How often automatic backups run. Use values such as
-          <span class="mono">30m</span>, <span class="mono">1h</span>, or
-          <span class="mono">1d</span>. Plain seconds are also accepted. Use
-          <span class="mono">0</span> to disable automatic backups.
+          Turn off to stop scheduled backups. Manual backups remain available.
         </p>
       </div>
+
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="next_run">Next backup</label>
+          <input
+            class="input"
+            id="next_run"
+            name="next_run"
+            type="datetime-local"
+            value="{{ next_run_value }}"
+            autocomplete="off"
+            {% if automatic_backups %}required{% endif %}
+          >
+          <p class="field-help">
+            When the next automatic backup should run.
+          </p>
+        </div>
+
+        <div class="form-field">
+          <label for="interval_preset">Repeat every</label>
+          <select class="input" id="interval_preset" name="interval_preset">
+            {% for value, label in interval_presets %}
+              <option
+                value="{{ value }}"
+                {% if interval_choice == value %}selected{% endif %}
+              >{{ label }}</option>
+            {% endfor %}
+            <option
+              value="custom"
+              {% if interval_choice == "custom" %}selected{% endif %}
+            >Custom interval…</option>
+          </select>
+          <div
+            class="custom-interval"
+            data-custom-interval
+            {% if interval_choice != "custom" %}hidden{% endif %}
+          >
+            <label class="sr-only" for="interval_custom">Custom interval</label>
+            <input
+              class="input"
+              id="interval_custom"
+              name="interval_custom"
+              value="{{ interval_custom }}"
+              placeholder="e.g. 90m"
+              autocomplete="off"
+              spellcheck="false"
+            >
+            <p class="field-help">
+              Use values such as <span class="mono">45m</span>,
+              <span class="mono">6h</span>, or <span class="mono">2d</span>.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div class="form-actions">
         <button class="button primary" type="submit">Save settings</button>
         <a class="button" href="/">Cancel</a>
@@ -57,10 +109,10 @@
     <div class="card">
       <p class="stat-label">Status</p>
       <p class="stat-value">
-        {% if interval <= 0 %}
-          <span class="badge muted">Automatic backups off</span>
-        {% else %}
+        {% if automatic_backups %}
           <span class="badge success">Scheduled</span>
+        {% else %}
+          <span class="badge muted">Automatic backups off</span>
         {% endif %}
       </p>
     </div>
@@ -247,6 +299,34 @@
 {% endblock %}
 
 {% block scripts %}
+  <script>
+    (() => {
+      const enabled = document.querySelector('#automatic_backups');
+      const nextRun = document.querySelector('#next_run');
+      const preset = document.querySelector('#interval_preset');
+      const custom = document.querySelector('[data-custom-interval]');
+      if (!enabled || !nextRun || !preset || !custom) {
+        return;
+      }
+
+      function syncPreset(focus = false) {
+        const isCustom = preset.value === 'custom';
+        custom.hidden = !isCustom;
+        if (focus && isCustom) {
+          custom.querySelector('input').focus();
+        }
+      }
+
+      function syncEnabled() {
+        nextRun.required = enabled.checked;
+      }
+
+      preset.addEventListener('change', () => syncPreset(true));
+      enabled.addEventListener('change', syncEnabled);
+      syncPreset();
+      syncEnabled();
+    })();
+  </script>
   <script>
     (() => {
       const form = document.querySelector('[data-discovery-form]');

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import ipaddress
 import json
 import logging
@@ -37,6 +37,16 @@ _LOGGER = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _DISCOVERY_TIMEOUT = 5.0
+_INTERVAL_PRESETS = (
+    ("1h", "Every hour"),
+    ("3h", "Every 3 hours"),
+    ("6h", "Every 6 hours"),
+    ("12h", "Every 12 hours"),
+    ("1d", "Every day"),
+    ("2d", "Every 2 days"),
+    ("7d", "Every week"),
+)
+_INTERVAL_PRESET_VALUES = {value for value, _ in _INTERVAL_PRESETS}
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 templates.env.globals["application_name"] = APPLICATION_NAME
 
@@ -90,6 +100,69 @@ def _format_interval_value(seconds: float) -> str:
         if remaining % unit_seconds == 0:
             return f"{remaining // unit_seconds}{suffix}"
     return str(remaining)
+
+
+def _format_datetime_local(value: datetime | None) -> str:
+    """Format a datetime for an HTML datetime-local input in local time."""
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone().strftime("%Y-%m-%dT%H:%M")
+
+
+def _parse_datetime_local(value: str) -> datetime:
+    """Parse an HTML datetime-local value as local time and return UTC."""
+    try:
+        timestamp = datetime.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid date and time: {value!r}") from exc
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.astimezone()
+    return timestamp.astimezone(UTC)
+
+
+def _interval_form_values(interval: float) -> tuple[str, str]:
+    """Return the interval preset selection and custom value for the form."""
+    if interval <= 0:
+        return "1h", ""
+    value = _format_interval_value(interval)
+    if value in _INTERVAL_PRESET_VALUES:
+        return value, ""
+    return "custom", value
+
+
+def _saved_next_run(store: BackupStore) -> datetime | None:
+    """Return the next backup time saved via the web UI, if any."""
+    value = store.get_settings().get("next_run_at")
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        _LOGGER.warning("Ignoring invalid saved next backup time: %r", value)
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC)
+
+
+def _effective_schedule(
+    configuration: Configuration, store: BackupStore
+) -> tuple[bool, int, datetime | None]:
+    """Return the effective automatic backup setting, interval, and next run."""
+    interval = _effective_interval(configuration, store)
+    saved_enabled = store.get_settings().get("automatic_backups")
+    enabled = saved_enabled if isinstance(saved_enabled, bool) else interval > 0
+    enabled = enabled and interval > 0
+    return enabled, interval, _saved_next_run(store) if enabled else None
+
+
+def _save_next_run(store: BackupStore, next_run: datetime | None) -> None:
+    """Persist the next scheduled backup time."""
+    settings = store.get_settings()
+    settings["next_run_at"] = next_run.isoformat() if next_run else None
+    store.save_settings(settings)
 
 
 def _effective_interval(configuration: Configuration, store: BackupStore) -> int:
@@ -331,10 +404,23 @@ def _settings_context(
     **overrides: object,
 ) -> dict[str, object]:
     """Build the template context for the settings page."""
+    interval = scheduler.interval
+    next_run = scheduler.next_run
+    next_run_value = next_run
+    if next_run_value is None:
+        next_run_value = datetime.now(UTC) + timedelta(
+            seconds=interval if interval > 0 else 3600
+        )
+    interval_choice, interval_custom = _interval_form_values(interval)
     context: dict[str, object] = {
-        "interval": scheduler.interval,
-        "interval_value": _format_interval_value(scheduler.interval),
-        "next_run": scheduler.next_run,
+        "interval": interval,
+        "interval_value": _format_interval_value(interval),
+        "interval_presets": _INTERVAL_PRESETS,
+        "interval_choice": interval_choice,
+        "interval_custom": interval_custom,
+        "automatic_backups": scheduler.enabled,
+        "next_run": next_run,
+        "next_run_value": _format_datetime_local(next_run_value),
         "ip_addresses": _saved_ip_addresses(store),
         "ip_addresses_value": "",
         "fallback_ip_addresses": configuration.ip_addresses() or [],
@@ -473,28 +559,61 @@ def _register_settings_routes(
 
     @app.post("/settings")
     async def save_settings(request: Request):
-        """Validate and persist the application settings."""
+        """Validate and persist the automatic backup schedule."""
         body = (await request.body()).decode("utf-8", errors="replace")
-        raw_interval = parse_qs(body).get("interval", [""])[0]
+        form = parse_qs(body)
+        automatic_backups = "automatic_backups" in form
+        raw_preset = form.get("interval_preset", [""])[0].strip()
+        raw_custom = form.get("interval_custom", [""])[0].strip()
+        raw_interval = (
+            raw_custom if raw_preset == "custom" else raw_preset or raw_custom
+        )
+        raw_next_run = form.get("next_run", [""])[0].strip()
+
+        interval: int | None = None
+        next_run_at: datetime | None = None
+        error: str | None = None
         try:
             interval = parse_interval(raw_interval)
         except TypeError, ValueError:
+            error = "Choose a valid interval such as 15m, 1h, or 1d."
+        if error is None and automatic_backups:
+            if interval is not None and interval <= 0:
+                error = "Choose an interval greater than zero."
+            elif not raw_next_run:
+                error = "Choose the next backup date and time."
+            else:
+                try:
+                    next_run_at = _parse_datetime_local(raw_next_run)
+                except ValueError:
+                    error = "Enter a valid next backup date and time."
+        if error is not None or interval is None:
             return _render_settings(
                 request,
                 configuration,
                 store,
                 scheduler,
                 status_code=400,
-                interval_value=raw_interval,
-                error=(
-                    "Enter a valid interval such as 30m, 1h, or 1d. "
-                    "Use 0 to disable automatic backups."
+                automatic_backups=automatic_backups,
+                interval_choice=(
+                    raw_preset
+                    if raw_preset in _INTERVAL_PRESET_VALUES or raw_preset == "custom"
+                    else "custom"
                 ),
+                interval_custom=raw_custom or raw_interval,
+                next_run_value=raw_next_run,
+                error=error,
             )
         settings = store.get_settings()
         settings["interval"] = interval
+        settings["automatic_backups"] = automatic_backups
+        settings["next_run_at"] = next_run_at.isoformat() if next_run_at else None
         store.save_settings(settings)
-        await scheduler.set_interval(interval)
+        await scheduler.set_schedule(
+            interval=interval,
+            enabled=automatic_backups,
+            next_run_at=next_run_at,
+        )
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
     _register_device_settings_routes(app, configuration, store, scheduler)
@@ -581,11 +700,16 @@ def create_app(
     """Create the Shelly Backup web application."""
     configuration = configuration or Configuration()
     store = store or BackupStore(configuration.database_path())
-    scheduler = scheduler or BackupScheduler(
-        Backup(configuration, store=store),
-        _effective_interval(configuration, store),
-        ip_addresses_provider=lambda: _effective_ip_addresses(configuration, store),
-    )
+    if scheduler is None:
+        enabled, interval, next_run_at = _effective_schedule(configuration, store)
+        scheduler = BackupScheduler(
+            Backup(configuration, store=store),
+            interval,
+            enabled=enabled,
+            next_run_at=next_run_at,
+            ip_addresses_provider=lambda: _effective_ip_addresses(configuration, store),
+            on_schedule_changed=lambda next_run: _save_next_run(store, next_run),
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

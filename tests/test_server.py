@@ -13,9 +13,12 @@ from shelly_backup.configuration import Configuration
 from shelly_backup.discovery import DiscoveredDevice
 from shelly_backup.server import (
     _effective_ip_addresses,
+    _format_datetime_local,
     _format_interval,
     _format_interval_value,
     _format_timestamp,
+    _interval_form_values,
+    _parse_datetime_local,
     _parse_ip_addresses,
     _saved_ip_addresses,
     create_app,
@@ -73,6 +76,18 @@ class TestFormatInterval:
         assert _format_interval_value(3600) == "1h"
         assert _format_interval_value(5400) == "90m"
         assert _format_interval_value(86400) == "1d"
+
+    def test_interval_form_values(self):
+        """Test mapping intervals to presets and the custom field."""
+        assert _interval_form_values(3600) == ("1h", "")
+        assert _interval_form_values(5400) == ("custom", "90m")
+        assert _interval_form_values(0) == ("1h", "")
+
+    def test_datetime_local_round_trip(self):
+        """Test formatting and parsing HTML datetime-local values."""
+        timestamp = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+
+        assert _parse_datetime_local(_format_datetime_local(timestamp)) == timestamp
 
 
 class TestIpAddresses:
@@ -622,7 +637,7 @@ class TestServer:
         assert 'href="/settings"' in response.text
 
     def test_settings_page(self):
-        """Test the settings page shows the current interval."""
+        """Test the settings page shows the current schedule controls."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             with TestClient(app) as client:
@@ -630,8 +645,10 @@ class TestServer:
 
         assert response.status_code == 200
         assert 'action="/settings"' in response.text
-        assert 'name="interval"' in response.text
-        assert 'value="0"' in response.text
+        assert 'name="automatic_backups"' in response.text
+        assert 'name="next_run"' in response.text
+        assert 'name="interval_preset"' in response.text
+        assert 'name="interval_custom"' in response.text
         assert "Save settings" in response.text
         assert "Automatic backups off" in response.text
 
@@ -806,7 +823,7 @@ class TestServer:
 
         assert response.status_code == 200
         assert "New devices found" in response.text
-        assert response.text.count('type="checkbox"\n') == 2
+        assert response.text.count('class="checkbox-cell"') == 2
         assert 'value="192.168.1.11"' in response.text
         assert 'value="2001:db8::1"' in response.text
         assert "ShellyPlus1PM-ABC" in response.text
@@ -829,7 +846,7 @@ class TestServer:
 
         assert response.status_code == 200
         assert "No new devices found." in response.text
-        assert 'type="checkbox"\n' not in response.text
+        assert 'class="checkbox-cell"' not in response.text
 
     def test_discover_devices_handles_errors(self):
         """Test that discovery errors are shown without breaking the page."""
@@ -867,7 +884,7 @@ class TestServer:
                 response = client.post("/settings/discover")
 
         assert response.status_code == 200
-        assert response.text.count('type="checkbox"\n') == 2
+        assert response.text.count('class="checkbox-cell"') == 2
         assert 'value="2001:db8::1"' in response.text
         assert "not-an-ip" not in response.text
 
@@ -999,43 +1016,77 @@ class TestServer:
         assert response.status_code == 303
 
     def test_save_settings(self):
-        """Test saving a new backup interval."""
+        """Test saving an automatic backup schedule."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
             with TestClient(app) as client:
                 scheduler = app.state.scheduler
-                scheduler.run_once = AsyncMock()
                 response = client.post(
                     "/settings",
-                    data={"interval": "30m"},
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "30m",
+                        "interval_custom": "",
+                        "next_run": "2099-01-01T12:00",
+                    },
                     follow_redirects=False,
                 )
 
                 assert response.status_code == 303
                 assert response.headers["location"] == "/settings?saved=1"
-                assert store.get_settings() == {"interval": 1800}
+                settings = store.get_settings()
+                assert settings["interval"] == 1800
+                assert settings["automatic_backups"] is True
+                assert datetime.fromisoformat(settings["next_run_at"]) == (
+                    _parse_datetime_local("2099-01-01T12:00")
+                )
                 assert scheduler.interval == 1800
                 assert scheduler.enabled is True
+                assert scheduler.next_run == datetime.fromisoformat(
+                    settings["next_run_at"]
+                )
 
-    def test_save_settings_preserves_future_settings(self):
-        """Test that saving the interval keeps other saved settings."""
+    def test_save_settings_uses_custom_interval(self):
+        """Test saving a custom interval that is not a preset."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            store.save_settings({"interval": 60, "future_setting": "keep me"})
             with TestClient(app) as client:
-                scheduler = app.state.scheduler
-                scheduler.run_once = AsyncMock()
                 response = client.post(
                     "/settings",
-                    data={"interval": "1h"},
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "custom",
+                        "interval_custom": "45m",
+                        "next_run": "2099-01-01T12:00",
+                    },
                     follow_redirects=False,
                 )
 
                 assert response.status_code == 303
-                assert store.get_settings() == {
-                    "interval": 3600,
-                    "future_setting": "keep me",
-                }
+                assert store.get_settings()["interval"] == 2700
+                assert app.state.scheduler.interval == 2700
+
+    def test_save_settings_preserves_future_settings(self):
+        """Test that saving the schedule keeps other saved settings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"interval": 60, "future_setting": "keep me"})
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings",
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "1h",
+                        "interval_custom": "",
+                        "next_run": "2099-01-01T12:00",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                settings = store.get_settings()
+                assert settings["interval"] == 3600
+                assert settings["future_setting"] == "keep me"
 
     def test_save_settings_rejects_invalid_interval(self):
         """Test that invalid intervals are rejected without saving."""
@@ -1045,7 +1096,12 @@ class TestServer:
                 scheduler = app.state.scheduler
                 response = client.post(
                     "/settings",
-                    data={"interval": "soon"},
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "custom",
+                        "interval_custom": "soon",
+                        "next_run": "2099-01-01T12:00",
+                    },
                     follow_redirects=False,
                 )
 
@@ -1065,34 +1121,91 @@ class TestServer:
                 assert response.status_code == 400
                 assert store.get_settings() == {}
 
+    def test_save_settings_requires_next_run_when_enabled(self):
+        """Test that enabling automatic backups requires a next run time."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings",
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "1h",
+                        "interval_custom": "",
+                        "next_run": "",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 400
+                assert "Choose the next backup date and time." in response.text
+                assert store.get_settings() == {}
+
+    def test_save_settings_rejects_zero_interval_when_enabled(self):
+        """Test that an enabled schedule needs a positive interval."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/settings",
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "custom",
+                        "interval_custom": "0",
+                        "next_run": "2099-01-01T12:00",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 400
+                assert "Choose an interval greater than zero." in response.text
+                assert store.get_settings() == {}
+
     def test_save_settings_can_disable_automatic_backups(self):
-        """Test that a zero interval disables automatic backups."""
+        """Test that disabling automatic backups keeps the interval."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
             with TestClient(app) as client:
                 scheduler = app.state.scheduler
                 response = client.post(
                     "/settings",
-                    data={"interval": "0"},
+                    data={
+                        "interval_preset": "1h",
+                        "interval_custom": "",
+                        "next_run": "",
+                    },
                     follow_redirects=False,
                 )
 
                 assert response.status_code == 303
-                assert store.get_settings() == {"interval": 0}
-                assert scheduler.interval == 0
+                assert store.get_settings() == {
+                    "interval": 3600,
+                    "automatic_backups": False,
+                    "next_run_at": None,
+                }
+                assert scheduler.interval == 3600
                 assert scheduler.enabled is False
+                assert scheduler.next_run is None
 
     def test_saved_settings_apply_on_startup(self):
         """Test that settings saved via the web UI override the configuration."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = Configuration(None, tmpdir, None, interval=0)
             store = BackupStore(config.database_path())
-            store.save_settings({"interval": 900})
+            next_run_at = _parse_datetime_local("2099-01-01T12:00")
+            store.save_settings(
+                {
+                    "interval": 900,
+                    "automatic_backups": True,
+                    "next_run_at": next_run_at.isoformat(),
+                }
+            )
 
             app = create_app(config, store=store)
 
         assert app.state.scheduler.interval == 900
         assert app.state.scheduler.enabled is True
+        assert app.state.scheduler.next_run == next_run_at
 
     def test_invalid_saved_settings_fall_back_to_configuration(self):
         """Test that invalid saved settings are ignored."""

@@ -10,7 +10,7 @@ useful if a device loses its configuration for whatever reason. Restoring
 settings to a device is not supported.
 
 * Support for generation 1, 2 and 3 devices.
-* Scheduled backups at a configurable interval.
+* Scheduled backups with a selectable next run time and interval.
 * Web UI for browsing devices, backup history, and individual backup snapshots.
 * One-shot backup mode for scripts and cron jobs.
 * Auto-discovery of Shelly devices via mDNS (`--discover`).
@@ -81,7 +81,7 @@ The server has no authentication. Only expose it on networks you trust.
 * `/devices/<ip-address>` - all backups for one device, newest first.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
-* `/settings` - configure the backup interval and device IP addresses.
+* `/settings` - configure the backup schedule and device IP addresses.
 * `/api/status` - scheduler status and live backup progress as JSON.
 * `/health` - server and scheduler status as JSON.
 
@@ -96,12 +96,14 @@ While a backup is running, the page shows a live progress bar and updates the
 status automatically. Once the run finishes, the page reloads so newly created
 backups appear without a manual refresh.
 
-The **Settings** page lets you change the backup interval and add or remove
-device IP addresses while the server is running. Devices added there are used
-for scheduled and manual backups and take precedence over the configuration
-file and `--ip-address`. Changes take effect immediately and are stored in the
-TinyDB database, so they survive a restart. Settings saved in the web UI take
-precedence over both the configuration file and command line options.
+The **Settings** page lets you turn automatic backups on or off, choose the
+date and time of the next run, and select how often backups repeat. It also lets
+you add or remove device IP addresses while the server is running. Devices added
+there are used for scheduled and manual backups and take precedence over the
+configuration file and `--ip-address`. Changes take effect immediately and are
+stored in the TinyDB database, so they survive a restart. Settings saved in the
+web UI take precedence over both the configuration file and command line
+options.
 
 ## One-shot backup
 

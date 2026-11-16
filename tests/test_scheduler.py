@@ -350,15 +350,82 @@ class TestBackupScheduler:
         assert backup.max_active == 1
 
     @pytest.mark.asyncio
-    async def test_next_run(self):
-        """Test the next run time after a backup."""
+    async def test_manual_run_does_not_change_next_run(self):
+        """Test that a manual backup keeps the scheduled next run."""
         backup = Mock()
         backup.execute.return_value = []
-        scheduler = BackupScheduler(backup, 60)
+        next_run = datetime.now(UTC) + timedelta(seconds=600)
+        scheduler = BackupScheduler(backup, 60, next_run_at=next_run)
 
         await scheduler.run_once()
 
-        assert scheduler.next_run == scheduler.last_run + timedelta(seconds=60)
+        assert scheduler.next_run == next_run
+
+    @pytest.mark.asyncio
+    async def test_start_waits_for_explicit_next_run(self):
+        """Test that an explicit future next run is not executed immediately."""
+        backup = Mock()
+        backup.execute.return_value = []
+        next_run = datetime.now(UTC) + timedelta(seconds=600)
+        scheduler = BackupScheduler(backup, 60, next_run_at=next_run)
+
+        await scheduler.start()
+        try:
+            await asyncio.sleep(0.05)
+            assert scheduler.run_count == 0
+            assert scheduler.next_run == next_run
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_scheduled_run_updates_and_saves_next_run(self):
+        """Test that a scheduled run schedules and persists the following run."""
+        backup = Mock()
+        backup.execute.return_value = []
+        saved = []
+        scheduler = BackupScheduler(backup, 3600, on_schedule_changed=saved.append)
+
+        await scheduler.start()
+        try:
+            for _ in range(100):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.01)
+
+            assert scheduler.run_count == 1
+            assert scheduler.next_run == scheduler.last_run + timedelta(seconds=3600)
+            assert saved[-1] == scheduler.next_run
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_set_schedule_disables_automatic_backups(self):
+        """Test that disabling the schedule clears the next run."""
+        scheduler = BackupScheduler(
+            Mock(), 60, next_run_at=datetime.now(UTC) + timedelta(seconds=60)
+        )
+
+        await scheduler.set_schedule(interval=60, enabled=False, next_run_at=None)
+
+        assert scheduler.enabled is False
+        assert scheduler.next_run is None
+
+    @pytest.mark.asyncio
+    async def test_set_schedule_waits_for_selected_next_run(self):
+        """Test that enabling the schedule waits for the selected next run."""
+        backup = Mock()
+        backup.execute.return_value = []
+        next_run = datetime.now(UTC) + timedelta(seconds=600)
+        scheduler = BackupScheduler(backup, 0)
+
+        await scheduler.set_schedule(interval=60, enabled=True, next_run_at=next_run)
+        try:
+            await asyncio.sleep(0.05)
+            assert scheduler.started is True
+            assert scheduler.run_count == 0
+            assert scheduler.next_run == next_run
+        finally:
+            await scheduler.stop()
 
     @pytest.mark.asyncio
     async def test_next_run_disabled(self):
