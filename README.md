@@ -11,6 +11,7 @@ settings to a device is not supported.
 
 * Support for generation 1, 2 and 3 devices.
 * Scheduled backups with a selectable next run time and interval.
+* Configurable retention for monthly, weekly, daily, and hourly backups.
 * Web UI for browsing devices, backup history, and individual backup snapshots.
 * One-shot backup mode for scripts and cron jobs.
 * Auto-discovery of Shelly devices via mDNS (`--discover`).
@@ -104,6 +105,13 @@ configuration file and `--ip-address`. Changes take effect immediately and are
 stored in the TinyDB database, so they survive a restart. Settings saved in the
 web UI take precedence over both the configuration file and command line
 options.
+
+The Settings page also configures backup retention separately for each device.
+It keeps the newest backup from each month, week, day, and hour, and removes
+older backups after the next successful backup. The defaults keep 12 monthly,
+4 weekly, 7 daily, and 24 hourly backups. A single backup can count towards
+several periods. Set a period to `0` to keep none for it; at least one period
+must remain above zero.
 
 ## One-shot backup
 

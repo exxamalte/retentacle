@@ -30,6 +30,7 @@ from .discovery import (
     discover_shelly_device_details,
     iter_shelly_device_details,
 )
+from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
 
@@ -47,6 +48,7 @@ _INTERVAL_PRESETS = (
     ("7d", "Every week"),
 )
 _INTERVAL_PRESET_VALUES = {value for value, _ in _INTERVAL_PRESETS}
+_RETENTION_MAX = 1000
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 templates.env.globals["application_name"] = APPLICATION_NAME
 
@@ -163,6 +165,35 @@ def _save_next_run(store: BackupStore, next_run: datetime | None) -> None:
     settings = store.get_settings()
     settings["next_run_at"] = next_run.isoformat() if next_run else None
     store.save_settings(settings)
+
+
+def _effective_retention(store: BackupStore) -> RetentionPolicy:
+    """Return the retention policy, using defaults when none is saved."""
+    return retention_policy_from_settings(store.get_settings())
+
+
+def _parse_retention(values: dict[str, str]) -> RetentionPolicy:
+    """Parse and validate retention values submitted by the settings form."""
+    parsed: dict[str, int] = {}
+    for field in RETENTION_FIELDS:
+        raw_value = values.get(field, "").strip()
+        if not raw_value:
+            raise ValueError("Enter a whole number for every retention period.")
+        try:
+            value = int(raw_value)
+        except ValueError as exc:
+            raise ValueError("Retention periods must be whole numbers.") from exc
+        if value < 0:
+            raise ValueError("Retention periods cannot be negative.")
+        if value > _RETENTION_MAX:
+            raise ValueError(f"Retention periods cannot exceed {_RETENTION_MAX}.")
+        parsed[field] = value
+    policy = RetentionPolicy(**parsed)
+    if not policy.enabled:
+        raise ValueError(
+            "Keep at least one backup by setting one of the periods above zero."
+        )
+    return policy
 
 
 def _effective_interval(configuration: Configuration, store: BackupStore) -> int:
@@ -421,6 +452,7 @@ def _settings_context(
         "automatic_backups": scheduler.enabled,
         "next_run": next_run,
         "next_run_value": _format_datetime_local(next_run_value),
+        "retention_values": _effective_retention(store).as_dict(),
         "ip_addresses": _saved_ip_addresses(store),
         "ip_addresses_value": "",
         "fallback_ip_addresses": configuration.ip_addresses() or [],
@@ -538,6 +570,41 @@ def _register_device_settings_routes(
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
 
+def _register_retention_settings_routes(
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+) -> None:
+    """Register the backup retention settings route."""
+
+    @app.post("/settings/retention")
+    async def save_retention(request: Request):
+        """Validate and persist the backup retention policy."""
+        body = (await request.body()).decode("utf-8", errors="replace")
+        form = parse_qs(body)
+        values = {
+            field: form.get(f"retention_{field}", [""])[0].strip()
+            for field in RETENTION_FIELDS
+        }
+        try:
+            policy = _parse_retention(values)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                retention_values=values,
+                error=str(exc),
+            )
+        settings = store.get_settings()
+        settings["retention"] = policy.as_dict()
+        store.save_settings(settings)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+
 def _register_settings_routes(
     app: FastAPI,
     configuration: Configuration,
@@ -616,6 +683,7 @@ def _register_settings_routes(
         )
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
+    _register_retention_settings_routes(app, configuration, store, scheduler)
     _register_device_settings_routes(app, configuration, store, scheduler)
 
 
