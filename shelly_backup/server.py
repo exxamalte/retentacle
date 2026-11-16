@@ -372,22 +372,38 @@ def _manual_backup_ip_addresses(store: BackupStore) -> list[str] | None:
     return _registered_ip_addresses(store)
 
 
+def _safe_redirect_path(value: str, default: str = "/") -> str:
+    """Return a safe in-application redirect path or the default."""
+    parsed_redirect = URL(value)
+    path = parsed_redirect.path
+    if (
+        not parsed_redirect.scheme
+        and not parsed_redirect.netloc
+        and path.startswith("/")
+        and not path.startswith("//")
+        and "\\" not in path
+        and "\r" not in path
+        and "\n" not in path
+    ):
+        return path
+    return default
+
+
 def _register_device_backup_route(
     app: FastAPI, store: BackupStore, scheduler: BackupScheduler
 ) -> None:
     """Register the manual per-device backup route."""
 
     @app.post("/devices/{ip_address}/backup")
-    async def backup_device(ip_address: str):
-        """Back up a single device and return to its detail page."""
+    async def backup_device(ip_address: str, redirect: str = ""):
+        """Back up a single device and return to the requesting page."""
         if not store.by_device(ip_address):
             raise HTTPException(status_code=404, detail="Device not found")
         success = await scheduler.run_device(ip_address)
         result = "backup_done" if success else "backup_failed"
         safe_ip_address = quote(ip_address, safe="")
-        return RedirectResponse(
-            url=f"/devices/{safe_ip_address}?{result}=1", status_code=303
-        )
+        target = _safe_redirect_path(redirect, f"/devices/{safe_ip_address}")
+        return RedirectResponse(url=f"{target}?{result}=1", status_code=303)
 
 
 def _register_backup_routes(
@@ -402,19 +418,7 @@ def _register_backup_routes(
         background_tasks.add_task(
             scheduler.run_once, _manual_backup_ip_addresses(store)
         )
-        parsed_redirect = URL(redirect)
-        path = parsed_redirect.path
-        target = (
-            path
-            if not parsed_redirect.scheme
-            and not parsed_redirect.netloc
-            and path.startswith("/")
-            and not path.startswith("//")
-            and "\\" not in path
-            and "\r" not in path
-            and "\n" not in path
-            else "/"
-        )
+        target = _safe_redirect_path(redirect)
         return RedirectResponse(url=f"{target}?backup_started=1", status_code=303)
 
     @app.get("/api/status")

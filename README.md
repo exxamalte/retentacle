@@ -89,9 +89,10 @@ The server has no authentication. Only expose it on networks you trust.
 A **Run backup now** button is available on every page. It backs up the devices
 configured on the Settings page. If no devices are configured there, it backs up
 all devices currently listed in the overview, falling back to the configured or
-discovered devices when the overview is empty. The device detail page also has a
-**Back up this device** button to back up just that device without waiting for
-the next scheduled run.
+discovered devices when the overview is empty. Each device row in the overview
+has a **Back up** button, and the device detail page has a **Back up this
+device** button, to back up just that device without waiting for the next
+scheduled run.
 
 While a backup is running, the page shows a live progress bar and updates the
 status automatically. Once the run finishes, the page reloads so newly created
