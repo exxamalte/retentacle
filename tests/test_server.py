@@ -910,6 +910,21 @@ class TestServer:
         assert "Add devices" in response.text
         assert "No devices added yet" in response.text
 
+    def test_settings_page_can_clear_discovery_selection(self):
+        """Test the streamed discovery results offer a select none action."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/settings")
+
+        assert response.status_code == 200
+        assert 'action="/settings/devices"' in response.text
+        assert (
+            '<button class="button" type="button" data-select-none>Select none</button>'
+            in response.text
+        )
+        assert "querySelectorAll('[data-select-none]')" in response.text
+
     def test_settings_page_lists_saved_devices(self):
         """Test that saved devices are listed with a remove action."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1063,6 +1078,12 @@ class TestServer:
         assert 'value="2001:db8::1"' in response.text
         assert "ShellyPlus1PM-ABC" in response.text
         assert "Plus1PM · gen 2 · 1.4.4" in response.text
+        assert (
+            response.text.count(
+                '<button class="button" type="button" data-select-none>'
+            )
+            == 2
+        )
         assert "data-discovery-empty hidden>No new devices found." not in response.text
 
     def test_discover_devices_reports_when_nothing_is_new(self):

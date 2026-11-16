@@ -21,6 +21,7 @@
 * Add on-demand mDNS device discovery to the settings page.
 * Show discovered device names and mDNS metadata, sorted by IP address.
 * Show discovery results incrementally without reloading the settings page.
+* Add a select none action to the discovered device list.
 * Show the actual last backup time on the overview instead of the server start time.
 * Add `--interval`, `--host`, and `--port` options.
 * Add `--once` for the original single-run backup behaviour.

@@ -150,12 +150,13 @@ shelly-backup --discover
 ```
 
 The **Settings** page also has a **Discover devices** button. It scans the
-network on demand and lets you select which discovered devices to add. Results
-appear as soon as they are found, without reloading the page, are sorted by IP
-address, and show the device name, model/type, generation, and firmware version
-advertised via mDNS when available. Only devices that are not already in the
-Settings device list are offered, so running discovery again shows just the new
-ones.
+network on demand and lets you select which discovered devices to add. Newly
+found devices are preselected, and a **Select none** button clears the selection
+in one click. Results appear as soon as they are found, without reloading the
+page, are sorted by IP address, and show the device name, model/type,
+generation, and firmware version advertised via mDNS when available. Only
+devices that are not already in the Settings device list are offered, so running
+discovery again shows just the new ones.
 
 The `--discover` option and `discover: true` configuration value remain
 available as a fallback when no devices are configured in Settings.
