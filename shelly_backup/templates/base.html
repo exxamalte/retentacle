@@ -337,6 +337,42 @@
       flex-wrap: wrap;
     }
 
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.9rem;
+    }
+
+    .toggle-field {
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 0.6rem;
+      background: var(--surface-muted);
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+      width: 1.05rem;
+      height: 1.05rem;
+      margin: 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .custom-interval {
+      margin-top: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

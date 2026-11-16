@@ -20,17 +20,22 @@ class BackupScheduler:
         backup: Backup,
         interval: float,
         *,
+        enabled: bool | None = None,
+        next_run_at: datetime | None = None,
         ip_addresses_provider: Callable[[], list[str] | None] | None = None,
+        on_schedule_changed: Callable[[datetime | None], None] | None = None,
     ):
         """Initialise the scheduler."""
         self._backup = backup
         self._interval = float(interval)
+        self._enabled = self._interval > 0 if enabled is None else bool(enabled)
         self._ip_addresses_provider = ip_addresses_provider
+        self._on_schedule_changed = on_schedule_changed
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._progress_lock = threading.Lock()
         self._reschedule = asyncio.Event()
-        self._next_run_at: datetime | None = None
+        self._next_run_at = next_run_at if self.enabled else None
         self._pending_runs = 0
         self.last_run: datetime | None = None
         self.last_error: str | None = None
@@ -50,7 +55,7 @@ class BackupScheduler:
     @property
     def enabled(self) -> bool:
         """Whether automatic backups are enabled."""
-        return self._interval > 0
+        return self._enabled and self._interval > 0
 
     @property
     def started(self) -> bool:
@@ -95,16 +100,32 @@ class BackupScheduler:
         return self._next_run_at
 
     async def set_interval(self, interval: float) -> None:
-        """Update the interval and reschedule the next backup."""
-        self._interval = float(interval)
-        self._next_run_at = (
-            datetime.now(UTC) + timedelta(seconds=self._interval)
-            if self.enabled
-            else None
+        """Update the interval and schedule the next backup from now."""
+        interval = float(interval)
+        enabled = interval > 0
+        await self.set_schedule(
+            interval=interval,
+            enabled=enabled,
+            next_run_at=(
+                datetime.now(UTC) + timedelta(seconds=interval) if enabled else None
+            ),
         )
+
+    async def set_schedule(
+        self,
+        *,
+        interval: float,
+        enabled: bool,
+        next_run_at: datetime | None,
+    ) -> None:
+        """Update the automatic backup schedule."""
+        self._interval = float(interval)
+        self._enabled = bool(enabled)
+        self._next_run_at = next_run_at if self.enabled else None
         if not self.enabled:
-            # The run loop, if active, waits for the interval to be enabled
-            # again. Do not cancel a backup that may currently be running.
+            # The run loop, if active, waits for automatic backups to be
+            # enabled again. Do not cancel a backup that may currently be
+            # running.
             self._reschedule.set()
             return
         if self._task is None:
@@ -116,6 +137,10 @@ class BackupScheduler:
         """Start the background scheduler."""
         if not self.enabled or self._task is not None:
             return
+        if self._next_run_at is None:
+            # No explicitly configured next run: run once immediately and
+            # schedule later runs from the completion time.
+            self._next_run_at = datetime.now(UTC)
         self._task = asyncio.create_task(
             self._run_loop(), name="shelly-backup-scheduler"
         )
@@ -174,11 +199,6 @@ class BackupScheduler:
                 _LOGGER.exception("Backup run failed")
             finally:
                 self.last_run = datetime.now(UTC)
-                self._next_run_at = (
-                    self.last_run + timedelta(seconds=self._interval)
-                    if self.enabled
-                    else None
-                )
                 self.run_count += 1
                 with self._progress_lock:
                     self.progress_current = None
@@ -197,25 +217,49 @@ class BackupScheduler:
                 with self._progress_lock:
                     self.progress_current = None
 
+    def _update_next_run(self, next_run_at: datetime | None) -> None:
+        """Update the next run time and persist it when configured to do so."""
+        self._next_run_at = next_run_at
+        if self._on_schedule_changed is None:
+            return
+        try:
+            self._on_schedule_changed(next_run_at)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Unable to save the next backup time")
+
     async def _wait_for_next_run(self) -> None:
-        """Wait for the current interval to elapse or to be changed."""
+        """Wait until the next backup is due or the schedule changes."""
         while True:
             if not self.enabled:
                 await self._reschedule.wait()
                 self._reschedule.clear()
                 return
-            try:
-                await asyncio.wait_for(self._reschedule.wait(), timeout=self._interval)
-            except TimeoutError:
+            now = datetime.now(UTC)
+            next_run_at = self._next_run_at
+            if next_run_at is None:
+                next_run_at = now
+                self._next_run_at = now
+            delay = (next_run_at - now).total_seconds()
+            if delay <= 0:
                 return
+            try:
+                await asyncio.wait_for(self._reschedule.wait(), timeout=delay)
+            except TimeoutError:
+                continue
             self._reschedule.clear()
 
     async def _run_loop(self) -> None:
         """Run backups until the scheduler is stopped."""
         while True:
-            if not self.enabled:
-                await self._reschedule.wait()
-                self._reschedule.clear()
-                continue
-            await self.run_once()
             await self._wait_for_next_run()
+            if not self.enabled:
+                continue
+            scheduled_next_run = self._next_run_at
+            await self.run_once()
+            if not self.enabled or self._next_run_at != scheduled_next_run:
+                # The schedule changed while the backup was running. Keep the
+                # user's new next-run selection.
+                continue
+            self._update_next_run(
+                (self.last_run or datetime.now(UTC)) + timedelta(seconds=self._interval)
+            )
