@@ -14,10 +14,10 @@ RETENTION_FIELDS = ("monthly", "weekly", "daily", "hourly")
 class RetentionPolicy:
     """Number of backups to keep for each retention period."""
 
-    monthly: int = 12
+    monthly: int = 6
     weekly: int = 4
     daily: int = 7
-    hourly: int = 24
+    hourly: int = 4
 
     @property
     def enabled(self) -> bool:
