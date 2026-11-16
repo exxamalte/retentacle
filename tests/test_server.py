@@ -536,7 +536,8 @@ class TestServer:
 
         assert response.status_code == 200
         assert 'action="/devices/192.168.1.10/backup?redirect=/"' in response.text
-        assert ">Back up</button>" in response.text
+        assert 'aria-label="Back up Kitchen now"' in response.text
+        assert '<use href="#icon-backup"/>' in response.text
 
     def test_manual_device_backup_returns_to_overview(self):
         """Test a per-device backup can return to the overview."""

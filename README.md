@@ -90,9 +90,11 @@ A **Run backup now** button is available on every page. It backs up the devices
 configured on the Settings page. If no devices are configured there, it backs up
 all devices currently listed in the overview, falling back to the configured or
 discovered devices when the overview is empty. Each device row in the overview
-has a **Back up** button, and the device detail page has a **Back up this
-device** button, to back up just that device without waiting for the next
-scheduled run.
+offers its actions — view backups, open the device web UI, and back up this
+device — as compact icon buttons with tooltips and screen-reader labels, so the
+table stays readable without horizontal scrolling. The device detail page keeps
+these as labelled buttons, including **Back up this device**, to back up just
+that device without waiting for the next scheduled run.
 
 Each device in the overview shows whether it is included in automatic backups
 and whether its latest backup is recent. A backup is considered recent when it
@@ -100,8 +102,8 @@ is within the configured automatic backup interval (plus a short grace period),
 or within the last 24 hours when automatic backups are disabled.
 
 Shelly devices usually serve their own configuration page over HTTP, so each
-device has an **Open web UI** link that opens `http://<ip-address>` in a new
-tab. The link uses the device's IP address; the backup tool does not proxy or
+device's web UI can be opened in a new tab from the overview icon or the detail
+page link. It opens `http://<ip-address>`; the backup tool does not proxy or
 reach the device itself.
 
 While a backup is running, the page shows a live progress bar and updates the

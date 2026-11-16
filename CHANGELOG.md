@@ -7,6 +7,7 @@
 * Add per-device backup buttons to the device overview.
 * Show automatic backup inclusion and backup recency indicators on the overview.
 * Add a link that opens each device's HTTP web UI in a new tab.
+* Replace the overview's row buttons with compact icon buttons to avoid horizontal scrolling.
 * Restrict backup redirects to known application pages.
 * Make the global "Run backup now" action back up all registered devices.
 * Add a live backup progress bar and automatic page refresh when a run finishes.

@@ -107,18 +107,29 @@
                 </td>
                 <td>
                   <div class="row-actions">
-                    <a class="button small" href="/devices/{{ device.ip_address }}">View backups</a>
+                    <a
+                      class="button icon-button"
+                      href="/devices/{{ device.ip_address }}"
+                      title="View backups"
+                      aria-label="View backups for {{ device.display_name }}"
+                    ><svg class="icon" aria-hidden="true"><use href="#icon-backups"/></svg></a>
                     {% if device.web_url %}
                       <a
-                        class="button small"
+                        class="button icon-button"
                         href="{{ device.web_url }}"
                         target="_blank"
                         rel="noopener noreferrer"
-                        title="Open the device web UI in a new tab"
-                      >Open web UI</a>
+                        title="Open web UI in a new tab"
+                        aria-label="Open the web UI for {{ device.display_name }} in a new tab"
+                      ><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
                     {% endif %}
                     <form method="post" action="/devices/{{ device.ip_address }}/backup?redirect=/">
-                      <button class="button small" type="submit">Back up</button>
+                      <button
+                        class="button icon-button"
+                        type="submit"
+                        title="Back up this device now"
+                        aria-label="Back up {{ device.display_name }} now"
+                      ><svg class="icon" aria-hidden="true"><use href="#icon-backup"/></svg></button>
                     </form>
                   </div>
                 </td>
