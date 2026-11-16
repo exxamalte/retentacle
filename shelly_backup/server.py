@@ -38,8 +38,6 @@ _LOGGER = logging.getLogger(__name__)
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _DISCOVERY_TIMEOUT = 5.0
 _INTERVAL_PRESETS = (
-    ("15m", "Every 15 minutes"),
-    ("30m", "Every 30 minutes"),
     ("1h", "Every hour"),
     ("3h", "Every 3 hours"),
     ("6h", "Every 6 hours"),
