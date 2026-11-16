@@ -1,6 +1,7 @@
 """Tests for the backup storage module."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 import tempfile
 
@@ -311,6 +312,33 @@ class TestBackupStore:
                 )
 
             assert len(store.all()) == 10
+
+    def test_latest_backup_time_without_database(self):
+        """Test that there is no latest backup time without a database."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "missing.json")
+
+            assert store.latest_backup_time() is None
+
+    def test_latest_backup_time(self):
+        """Test that the latest backup time is returned."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store.add(_record(timestamp="2026-11-15T10:00:00+00:00"))
+            store.add(_record(timestamp="2026-11-15T12:00:00+00:00"))
+            store.add(_record(timestamp="2026-11-15T11:00:00+00:00"))
+
+            assert store.latest_backup_time() == datetime(
+                2026, 11, 15, 12, 0, tzinfo=UTC
+            )
+
+    def test_latest_backup_time_with_invalid_timestamp(self):
+        """Test that an invalid latest timestamp is ignored."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store.add(_record(timestamp="not-a-timestamp"))
+
+            assert store.latest_backup_time() is None
 
     def test_settings_without_database(self):
         """Test reading settings from a database that does not exist yet."""

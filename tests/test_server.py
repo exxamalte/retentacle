@@ -1,5 +1,6 @@
 """Tests for the web server module."""
 
+from datetime import UTC, datetime
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -10,6 +11,7 @@ from shelly_backup.configuration import Configuration
 from shelly_backup.server import (
     _format_interval,
     _format_interval_value,
+    _format_timestamp,
     create_app,
     run_server,
 )
@@ -116,7 +118,7 @@ class TestServer:
         assert "Backup started" in response.text
         assert "Run backup now" in response.text
         assert "Backup interval" in response.text
-        assert "Last run" in response.text
+        assert "Last backup" in response.text
         assert "Next run" in response.text
         assert "Automatic backups off" in response.text
         assert "No backups yet" in response.text
@@ -132,6 +134,40 @@ class TestServer:
         assert response.status_code == 200
         assert "Last backup failed" in response.text
         assert "Device unreachable" in response.text
+
+    def test_index_shows_last_backup_from_database(self):
+        """Test that the overview shows the last backup, not the last server run."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[_record(timestamp="2026-11-15T10:00:00+00:00")],
+            )
+            app.state.scheduler.last_run = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert _format_timestamp("2026-11-15T10:00:00+00:00") in response.text
+        assert (
+            _format_timestamp(datetime(2026, 11, 16, 12, 0, tzinfo=UTC))
+            not in response.text
+        )
+
+    def test_index_shows_never_without_backups(self):
+        """Test that the overview shows no last backup without records."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.scheduler.last_run = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert "Last backup" in response.text
+        assert "Never" in response.text
+        assert (
+            _format_timestamp(datetime(2026, 11, 16, 12, 0, tzinfo=UTC))
+            not in response.text
+        )
 
     def test_index_has_progress_bar_and_live_updates(self):
         """Test the page includes the progress bar and status polling."""

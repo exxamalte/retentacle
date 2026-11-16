@@ -237,6 +237,7 @@ def _register_routes(
             context={
                 "devices": store.devices(),
                 "scheduler": scheduler,
+                "last_backup": store.latest_backup_time(),
                 "database_path": store.path,
             },
         )
