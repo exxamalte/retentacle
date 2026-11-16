@@ -1,6 +1,6 @@
 """Tests for the web server module."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
@@ -20,6 +20,7 @@ from shelly_backup.server import (
     _interval_form_values,
     _parse_datetime_local,
     _parse_ip_addresses,
+    _recent_backup_cutoff,
     _saved_ip_addresses,
     create_app,
     run_server,
@@ -140,6 +141,30 @@ class TestIpAddresses:
             assert _effective_ip_addresses(config, store) == ["192.168.1.1"]
 
 
+class TestDeviceIndicators:
+    """Tests for automatic backup and recency indicators."""
+
+    def test_recent_backup_cutoff_uses_interval(self):
+        """Test that the recent window follows the automatic backup interval."""
+        scheduler = Mock()
+        scheduler.enabled = True
+        scheduler.interval = 3600
+        now = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+
+        assert _recent_backup_cutoff(scheduler, now) == now - timedelta(
+            hours=1, minutes=5
+        )
+
+    def test_recent_backup_cutoff_without_automatic_backups(self):
+        """Test the fallback recent window when automatic backups are off."""
+        scheduler = Mock()
+        scheduler.enabled = False
+        scheduler.interval = 3600
+        now = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+
+        assert _recent_backup_cutoff(scheduler, now) == now - timedelta(hours=24)
+
+
 class TestServer:
     """Tests for the web server routes."""
 
@@ -177,6 +202,43 @@ class TestServer:
         assert "192.168.1.10" in response.text
         assert "192.168.1.11" in response.text
         assert "View backups" in response.text
+
+    def test_index_shows_device_backup_indicators(self):
+        """Test the overview shows automatic and recent backup indicators."""
+        now = datetime.now(UTC)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    _record(
+                        ip_address="192.168.1.10",
+                        timestamp=(now - timedelta(minutes=5)).isoformat(),
+                    ),
+                    _record(
+                        ip_address="192.168.1.11",
+                        timestamp=(now - timedelta(days=2)).isoformat(),
+                    ),
+                    _record(
+                        ip_address="192.168.1.12",
+                        timestamp="not-a-timestamp",
+                    ),
+                ],
+            )
+            store.save_settings({"ip_addresses": ["192.168.1.10"]})
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert 'title="Included in automatic backups">Automatic</span>' in response.text
+        assert (
+            'title="Not included in automatic backups">Manual only</span>'
+            in response.text
+        )
+        assert 'title="A backup was taken recently">Recent</span>' in response.text
+        assert 'title="No recent backup">Stale</span>' in response.text
+        assert 'title="The latest backup timestamp is invalid">Unknown</span>' in (
+            response.text
+        )
 
     def test_index_shows_status_and_backup_started_notice(self):
         """Test the overview page shows scheduler status and the notice."""

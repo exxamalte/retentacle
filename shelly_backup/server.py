@@ -333,6 +333,64 @@ def _effective_ip_addresses(
     return configuration.ip_addresses()
 
 
+def _normalized_ip_address(value: object) -> str:
+    """Return a canonical IP address string, or the original value."""
+    try:
+        return str(ipaddress.ip_address(str(value)))
+    except ValueError:
+        return str(value)
+
+
+def _record_timestamp(record: dict[str, object]) -> datetime | None:
+    """Return a backup record's timestamp in UTC, if valid."""
+    value = record.get("timestamp")
+    if isinstance(value, datetime):
+        timestamp = value
+    elif isinstance(value, str):
+        try:
+            timestamp = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    else:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC)
+
+
+def _recent_backup_cutoff(scheduler: BackupScheduler, now: datetime) -> datetime:
+    """Return the earliest timestamp considered a recent backup."""
+    if scheduler.enabled and scheduler.interval > 0:
+        window = timedelta(seconds=scheduler.interval) + timedelta(minutes=5)
+    else:
+        window = timedelta(hours=24)
+    return now - window
+
+
+def _device_overviews(
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+    now: datetime,
+) -> list[dict[str, object]]:
+    """Return device summaries with automatic backup and recency indicators."""
+    automatic_ip_addresses = {
+        _normalized_ip_address(value)
+        for value in (_effective_ip_addresses(configuration, store) or [])
+    }
+    cutoff = _recent_backup_cutoff(scheduler, now)
+    overviews: list[dict[str, object]] = []
+    for device in store.devices():
+        overview = dict(device)
+        ip_address = _normalized_ip_address(device.get("ip_address", ""))
+        overview["automatic"] = ip_address in automatic_ip_addresses
+        latest = device.get("latest")
+        timestamp = _record_timestamp(latest) if isinstance(latest, dict) else None
+        overview["recent"] = None if timestamp is None else timestamp >= cutoff
+        overviews.append(overview)
+    return overviews
+
+
 templates.env.filters["format_timestamp"] = _format_timestamp
 templates.env.filters["format_interval"] = _format_interval
 
@@ -715,7 +773,9 @@ def _register_routes(
             request=request,
             name="index.html",
             context={
-                "devices": store.devices(),
+                "devices": _device_overviews(
+                    configuration, store, scheduler, datetime.now(UTC)
+                ),
                 "scheduler": scheduler,
                 "last_backup": store.latest_backup_time(),
                 "database_path": store.path,

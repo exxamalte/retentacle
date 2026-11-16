@@ -78,7 +78,7 @@ The server has no authentication. Only expose it on networks you trust.
 
 ### Web UI
 
-* `/` - devices overview with scheduler status, backup counts, and last backup times.
+* `/` - devices overview with scheduler status, backup counts, last backup times, and per-device indicators for automatic backups and recent backups.
 * `/devices/<ip-address>` - all backups for one device, newest first.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
@@ -93,6 +93,11 @@ discovered devices when the overview is empty. Each device row in the overview
 has a **Back up** button, and the device detail page has a **Back up this
 device** button, to back up just that device without waiting for the next
 scheduled run.
+
+Each device in the overview shows whether it is included in automatic backups
+and whether its latest backup is recent. A backup is considered recent when it
+is within the configured automatic backup interval (plus a short grace period),
+or within the last 24 hours when automatic backups are disabled.
 
 While a backup is running, the page shows a live progress bar and updates the
 status automatically. Once the run finishes, the page reloads so newly created
