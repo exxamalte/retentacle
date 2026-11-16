@@ -677,10 +677,10 @@ class TestServer:
         assert 'id="retention_daily"' in response.text
         assert 'id="retention_hourly"' in response.text
         assert "Save retention" in response.text
-        assert 'value="12"' in response.text
+        assert 'value="6"' in response.text
         assert 'value="4"' in response.text
         assert 'value="7"' in response.text
-        assert 'value="24"' in response.text
+        assert 'value="4"' in response.text
 
     def test_settings_page_shows_devices_section(self):
         """Test that the settings page offers device management."""
