@@ -78,8 +78,8 @@ The server has no authentication. Only expose it on networks you trust.
 
 ### Web UI
 
-* `/` - devices overview with scheduler status, backup counts, and last backup times.
-* `/devices/<ip-address>` - all backups for one device, newest first.
+* `/` - devices overview with scheduler status, backup counts, last backup times, and per-device indicators for automatic backups and recent backups.
+* `/devices/<ip-address>` - all backups for one device, newest first, plus a link to the device web UI.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
 * `/settings` - configure the backup schedule and device IP addresses.
@@ -90,9 +90,21 @@ A **Run backup now** button is available on every page. It backs up the devices
 configured on the Settings page. If no devices are configured there, it backs up
 all devices currently listed in the overview, falling back to the configured or
 discovered devices when the overview is empty. Each device row in the overview
-has a **Back up** button, and the device detail page has a **Back up this
-device** button, to back up just that device without waiting for the next
-scheduled run.
+offers its actions — view backups, open the device web UI, and back up this
+device — as compact icon buttons with tooltips and screen-reader labels, so the
+table stays readable without horizontal scrolling. The device detail page keeps
+these as labelled buttons, including **Back up this device**, to back up just
+that device without waiting for the next scheduled run.
+
+Each device in the overview shows whether it is included in automatic backups
+and whether its latest backup is recent. A backup is considered recent when it
+is within the configured automatic backup interval (plus a short grace period),
+or within the last 24 hours when automatic backups are disabled.
+
+Shelly devices usually serve their own configuration page over HTTP, so each
+device's web UI can be opened in a new tab from the overview icon or the detail
+page link. It opens `http://<ip-address>`; the backup tool does not proxy or
+reach the device itself.
 
 While a backup is running, the page shows a live progress bar and updates the
 status automatically. Once the run finishes, the page reloads so newly created
@@ -138,12 +150,13 @@ shelly-backup --discover
 ```
 
 The **Settings** page also has a **Discover devices** button. It scans the
-network on demand and lets you select which discovered devices to add. Results
-appear as soon as they are found, without reloading the page, are sorted by IP
-address, and show the device name, model/type, generation, and firmware version
-advertised via mDNS when available. Only devices that are not already in the
-Settings device list are offered, so running discovery again shows just the new
-ones.
+network on demand and lets you select which discovered devices to add. Newly
+found devices are preselected, and a **Select none** button clears the selection
+in one click. Results appear as soon as they are found, without reloading the
+page, are sorted by IP address, and show the device name, model/type,
+generation, and firmware version advertised via mDNS when available. Only
+devices that are not already in the Settings device list are offered, so running
+discovery again shows just the new ones.
 
 The `--discover` option and `discover: true` configuration value remain
 available as a fallback when no devices are configured in Settings.

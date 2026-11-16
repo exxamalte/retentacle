@@ -297,6 +297,7 @@
           </table>
         </div>
         <div class="form-actions">
+          <button class="button" type="button" data-select-none>Select none</button>
           <button class="button primary" type="submit">Add selected devices</button>
         </div>
       </form>
@@ -348,6 +349,7 @@
             </table>
           </div>
           <div class="form-actions">
+            <button class="button" type="button" data-select-none>Select none</button>
             <button class="button primary" type="submit">Add selected devices</button>
           </div>
         </form>
@@ -566,6 +568,23 @@
           button.disabled = false;
           button.textContent = buttonLabel;
         }
+      });
+    })();
+  </script>
+  <script>
+    (() => {
+      document.querySelectorAll('[data-select-none]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const form = button.closest('form');
+          if (!form) {
+            return;
+          }
+          form
+            .querySelectorAll('input[name="ip_addresses"]')
+            .forEach((input) => {
+              input.checked = false;
+            });
+        });
       });
     })();
   </script>

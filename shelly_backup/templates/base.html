@@ -234,6 +234,10 @@
       font-size: 0.82rem;
     }
 
+    .button.icon-button {
+      padding: 0.42rem;
+    }
+
     .button[aria-current="page"] {
       border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
       color: var(--accent-strong);
@@ -500,8 +504,33 @@
 
     .row-actions {
       display: flex;
-      gap: 0.5rem;
+      flex-wrap: wrap;
+      gap: 0.4rem;
       align-items: center;
+    }
+
+    .icon-sprite {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    .icon {
+      display: block;
+      width: 1rem;
+      height: 1rem;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .badge-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
     }
 
     .empty {
@@ -638,14 +667,30 @@
       td {
         white-space: normal;
       }
-
-      .row-actions {
-        flex-wrap: wrap;
-      }
     }
   </style>
 </head>
 <body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-backups" viewBox="0 0 24 24">
+      <line x1="4" y1="6" x2="4.01" y2="6"/>
+      <line x1="4" y1="12" x2="4.01" y2="12"/>
+      <line x1="4" y1="18" x2="4.01" y2="18"/>
+      <line x1="9" y1="6" x2="20" y2="6"/>
+      <line x1="9" y1="12" x2="20" y2="12"/>
+      <line x1="9" y1="18" x2="20" y2="18"/>
+    </symbol>
+    <symbol id="icon-external" viewBox="0 0 24 24">
+      <path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>
+      <polyline points="15 3 21 3 21 9"/>
+      <line x1="10" y1="14" x2="21" y2="3"/>
+    </symbol>
+    <symbol id="icon-backup" viewBox="0 0 24 24">
+      <path d="M20 15v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/>
+      <polyline points="7 10 12 15 17 10"/>
+      <line x1="12" y1="15" x2="12" y2="3"/>
+    </symbol>
+  </svg>
   <header class="site-header">
     <div class="header-inner">
       <a class="brand" href="/">

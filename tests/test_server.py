@@ -1,6 +1,6 @@
 """Tests for the web server module."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
@@ -20,6 +20,7 @@ from shelly_backup.server import (
     _interval_form_values,
     _parse_datetime_local,
     _parse_ip_addresses,
+    _recent_backup_cutoff,
     _saved_ip_addresses,
     create_app,
     run_server,
@@ -140,6 +141,30 @@ class TestIpAddresses:
             assert _effective_ip_addresses(config, store) == ["192.168.1.1"]
 
 
+class TestDeviceIndicators:
+    """Tests for automatic backup and recency indicators."""
+
+    def test_recent_backup_cutoff_uses_interval(self):
+        """Test that the recent window follows the automatic backup interval."""
+        scheduler = Mock()
+        scheduler.enabled = True
+        scheduler.interval = 3600
+        now = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+
+        assert _recent_backup_cutoff(scheduler, now) == now - timedelta(
+            hours=1, minutes=5
+        )
+
+    def test_recent_backup_cutoff_without_automatic_backups(self):
+        """Test the fallback recent window when automatic backups are off."""
+        scheduler = Mock()
+        scheduler.enabled = False
+        scheduler.interval = 3600
+        now = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+
+        assert _recent_backup_cutoff(scheduler, now) == now - timedelta(hours=24)
+
+
 class TestServer:
     """Tests for the web server routes."""
 
@@ -177,6 +202,68 @@ class TestServer:
         assert "192.168.1.10" in response.text
         assert "192.168.1.11" in response.text
         assert "View backups" in response.text
+
+    def test_index_shows_device_backup_indicators(self):
+        """Test the overview shows automatic and recent backup indicators."""
+        now = datetime.now(UTC)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    _record(
+                        ip_address="192.168.1.10",
+                        timestamp=(now - timedelta(minutes=5)).isoformat(),
+                    ),
+                    _record(
+                        ip_address="192.168.1.11",
+                        timestamp=(now - timedelta(days=2)).isoformat(),
+                    ),
+                    _record(
+                        ip_address="192.168.1.12",
+                        timestamp="not-a-timestamp",
+                    ),
+                ],
+            )
+            store.save_settings({"ip_addresses": ["192.168.1.10"]})
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert 'title="Included in automatic backups">Automatic</span>' in response.text
+        assert (
+            'title="Not included in automatic backups">Manual</span>' in response.text
+        )
+        assert 'title="A backup was taken recently">Recent</span>' in response.text
+        assert 'title="No recent backup">Stale</span>' in response.text
+        assert 'title="The latest backup timestamp is invalid">Unknown</span>' in (
+            response.text
+        )
+
+    def test_index_links_to_device_web_ui(self):
+        """Test the overview opens each device web UI in a new tab."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert 'href="http://192.168.1.10"' in response.text
+        assert 'target="_blank"' in response.text
+        assert 'rel="noopener noreferrer"' in response.text
+        assert "Open web UI" in response.text
+
+    def test_index_links_to_ipv6_device_web_ui(self):
+        """Test IPv6 device web UI links use brackets."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[_record(ip_address="2001:db8::1")],
+            )
+            with TestClient(app) as client:
+                response = client.get("/")
+
+        assert response.status_code == 200
+        assert 'href="http://[2001:db8::1]"' in response.text
 
     def test_index_shows_status_and_backup_started_notice(self):
         """Test the overview page shows scheduler status and the notice."""
@@ -346,6 +433,19 @@ class TestServer:
         assert "data-backup-progress" in response.text
         assert 'action="/backup?redirect=/devices/192.168.1.10"' in response.text
 
+    def test_device_page_links_to_web_ui(self):
+        """Test the device page opens its web UI in a new tab."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                response = client.get("/devices/192.168.1.10")
+
+        assert response.status_code == 200
+        assert 'href="http://192.168.1.10"' in response.text
+        assert "Open web UI" in response.text
+        assert 'target="_blank"' in response.text
+        assert 'rel="noopener noreferrer"' in response.text
+
     def test_pages_use_generation_1_configured_name(self):
         """Test that generation 1 devices show their configured name."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -435,7 +535,8 @@ class TestServer:
 
         assert response.status_code == 200
         assert 'action="/devices/192.168.1.10/backup?redirect=/"' in response.text
-        assert ">Back up</button>" in response.text
+        assert 'aria-label="Back up Kitchen now"' in response.text
+        assert '<use href="#icon-backup"/>' in response.text
 
     def test_manual_device_backup_returns_to_overview(self):
         """Test a per-device backup can return to the overview."""
@@ -809,6 +910,21 @@ class TestServer:
         assert "Add devices" in response.text
         assert "No devices added yet" in response.text
 
+    def test_settings_page_can_clear_discovery_selection(self):
+        """Test the streamed discovery results offer a select none action."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/settings")
+
+        assert response.status_code == 200
+        assert 'action="/settings/devices"' in response.text
+        assert (
+            '<button class="button" type="button" data-select-none>Select none</button>'
+            in response.text
+        )
+        assert "querySelectorAll('[data-select-none]')" in response.text
+
     def test_settings_page_lists_saved_devices(self):
         """Test that saved devices are listed with a remove action."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -962,6 +1078,12 @@ class TestServer:
         assert 'value="2001:db8::1"' in response.text
         assert "ShellyPlus1PM-ABC" in response.text
         assert "Plus1PM · gen 2 · 1.4.4" in response.text
+        assert (
+            response.text.count(
+                '<button class="button" type="button" data-select-none>'
+            )
+            == 2
+        )
         assert "data-discovery-empty hidden>No new devices found." not in response.text
 
     def test_discover_devices_reports_when_nothing_is_new(self):

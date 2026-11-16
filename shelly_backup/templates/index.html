@@ -73,6 +73,7 @@
               <th scope="col">Generation</th>
               <th scope="col">Backups</th>
               <th scope="col">Last backup</th>
+              <th scope="col">Status</th>
               <th scope="col"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
@@ -89,10 +90,46 @@
                 <td>{{ device.backup_count }}</td>
                 <td>{{ device.latest.timestamp|format_timestamp }}</td>
                 <td>
+                  <div class="badge-list">
+                    {% if device.automatic %}
+                      <span class="badge success" title="Included in automatic backups">Automatic</span>
+                    {% else %}
+                      <span class="badge muted" title="Not included in automatic backups">Manual</span>
+                    {% endif %}
+                    {% if device.recent is none %}
+                      <span class="badge muted" title="The latest backup timestamp is invalid">Unknown</span>
+                    {% elif device.recent %}
+                      <span class="badge success" title="A backup was taken recently">Recent</span>
+                    {% else %}
+                      <span class="badge warning" title="No recent backup">Stale</span>
+                    {% endif %}
+                  </div>
+                </td>
+                <td>
                   <div class="row-actions">
-                    <a class="button small" href="/devices/{{ device.ip_address }}">View backups</a>
+                    <a
+                      class="button icon-button"
+                      href="/devices/{{ device.ip_address }}"
+                      title="View backups"
+                      aria-label="View backups for {{ device.display_name }}"
+                    ><svg class="icon" aria-hidden="true"><use href="#icon-backups"/></svg></a>
+                    {% if device.web_url %}
+                      <a
+                        class="button icon-button"
+                        href="{{ device.web_url }}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open web UI in a new tab"
+                        aria-label="Open the web UI for {{ device.display_name }} in a new tab"
+                      ><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
+                    {% endif %}
                     <form method="post" action="/devices/{{ device.ip_address }}/backup?redirect=/">
-                      <button class="button small" type="submit">Back up</button>
+                      <button
+                        class="button icon-button"
+                        type="submit"
+                        title="Back up this device now"
+                        aria-label="Back up {{ device.display_name }} now"
+                      ><svg class="icon" aria-hidden="true"><use href="#icon-backup"/></svg></button>
                     </form>
                   </div>
                 </td>

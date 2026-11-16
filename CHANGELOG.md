@@ -5,6 +5,9 @@
 * Add a web UI for browsing backups per device and viewing raw backup data.
 * Add a manual per-device backup action on the device detail page.
 * Add per-device backup buttons to the device overview.
+* Show automatic backup inclusion and backup recency indicators on the overview.
+* Add a link that opens each device's HTTP web UI in a new tab.
+* Replace the overview's row buttons with compact icon buttons to avoid horizontal scrolling.
 * Restrict backup redirects to known application pages.
 * Make the global "Run backup now" action back up all registered devices.
 * Add a live backup progress bar and automatic page refresh when a run finishes.
@@ -18,6 +21,7 @@
 * Add on-demand mDNS device discovery to the settings page.
 * Show discovered device names and mDNS metadata, sorted by IP address.
 * Show discovery results incrementally without reloading the settings page.
+* Add a select none action to the discovered device list.
 * Show the actual last backup time on the overview instead of the server start time.
 * Add `--interval`, `--host`, and `--port` options.
 * Add `--once` for the original single-run backup behaviour.
