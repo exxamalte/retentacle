@@ -13,6 +13,7 @@ settings to a device is not supported.
 * Scheduled backups with a selectable next run time and interval.
 * Configurable retention for monthly, weekly, daily, and hourly backups.
 * Web UI for browsing devices, backup history, and individual backup snapshots.
+* User accounts with admin and read-only roles, created on first startup.
 * One-shot backup mode for scripts and cron jobs.
 * Auto-discovery of Shelly devices via mDNS (`--discover`).
 * Fetches device configuration:
@@ -48,7 +49,8 @@ python -m shelly_backup --ip-address 192.168.10.20
 ```
 
 By default the web server listens on `http://127.0.0.1:8080` and runs a backup
-every hour. Open that address in a browser to see the devices overview. The
+every hour. Open that address in a browser for the first time to create the
+initial admin account, then sign in to see the devices overview. The
 first backup starts immediately after startup; subsequent backups run at the
 configured interval.
 
@@ -74,7 +76,32 @@ To expose the web UI on your local network, bind to all interfaces:
 shelly-backup --host 0.0.0.0 --port 8080
 ```
 
-The server has no authentication. Only expose it on networks you trust.
+The server requires a login for all pages except `/health`. Only expose it on
+networks you trust.
+
+### Users and roles
+
+The web server ships with simple built-in user management:
+
+* On the first start — while no user accounts exist — every page redirects to a
+  setup wizard where you create the initial **admin** account. You are then
+  signed in automatically.
+* **Administrators** can do everything: browse and download backups, run
+  backups, change settings, and manage user accounts in the Users section of
+  the Settings page.
+* **Read-only** users can look around: they can browse devices, view the backup
+  history, and download backups, but they cannot change any settings or take
+  new backups. The admin-only buttons and pages are hidden from them, and the
+  server rejects their requests to those routes.
+* Additional accounts — with either role — are created by admins on the
+  **Settings** page. Passwords must be at least 12 characters long and include at
+  least one digit and one special character. They are stored as salted PBKDF2
+  hashes, never in plain text. The last admin account can neither be deleted
+  nor demoted, and admins cannot delete their own account.
+
+Login sessions are stored server-side and referenced by HTTP-only cookies.
+They expire after 30 days. Changing a password signs that user out of all
+sessions.
 
 ### Web UI
 
@@ -82,9 +109,12 @@ The server has no authentication. Only expose it on networks you trust.
 * `/devices/<ip-address>` - all backups for one device, newest first, plus a link to the device web UI.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
-* `/settings` - configure the backup schedule and device IP addresses.
+* `/settings` - configure the backup schedule and device IP addresses, and manage user accounts, roles, and passwords (admin only).
+* `/setup` - first-run wizard to create the initial admin account.
+* `/login`, `/logout` - sign in and out.
 * `/api/status` - scheduler status and live backup progress as JSON.
-* `/health` - server and scheduler status as JSON.
+* `/health` - server and scheduler status as JSON (the only page that does not require a login).
+* `/users` - legacy alias that redirects to `/settings`.
 
 A **Run backup now** button is available on every page. It backs up the devices
 configured on the Settings page. If no devices are configured there, it backs up
@@ -200,3 +230,7 @@ saved in the web UI take precedence over both.
 Backups are stored in a TinyDB database named `shelly_backup.json` inside the
 target folder. Each record contains the device IP address, a timestamp, the
 device generation, basic device information, and the fetched configuration.
+
+User accounts and login sessions are stored in a separate TinyDB database
+named `shelly_backup_users.json` in the same folder. Passwords are stored as
+salted PBKDF2 hashes and session tokens only appear as salted hashes.

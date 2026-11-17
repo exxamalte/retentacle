@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 import ipaddress
 import json
 import logging
-from pathlib import Path
 import re
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -19,9 +18,16 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
-from fastapi.templating import Jinja2Templates
 import uvicorn
 
+from .auth import (
+    current_user,
+    register_auth,
+    require_admin,
+    start_session,
+    user_management_context,
+    with_session_cookie,
+)
 from .backup import Backup
 from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME
@@ -33,10 +39,11 @@ from .discovery import (
 from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
+from .templating import templates
+from .users import UserRole, UserStore
 
 _LOGGER = logging.getLogger(__name__)
 
-_TEMPLATES_DIR = Path(__file__).parent / "templates"
 _DISCOVERY_TIMEOUT = 5.0
 _INTERVAL_PRESETS = (
     ("1h", "Every hour"),
@@ -49,8 +56,6 @@ _INTERVAL_PRESETS = (
 )
 _INTERVAL_PRESET_VALUES = {value for value, _ in _INTERVAL_PRESETS}
 _RETENTION_MAX = 1000
-templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-templates.env.globals["application_name"] = APPLICATION_NAME
 
 
 def _format_timestamp(value: datetime | str | None) -> str:
@@ -470,8 +475,9 @@ def _register_device_backup_route(
     """Register the manual per-device backup route."""
 
     @app.post("/devices/{ip_address}/backup")
-    async def backup_device(ip_address: str, redirect: str = ""):
+    async def backup_device(request: Request, ip_address: str, redirect: str = ""):
         """Back up a single device and return to the requesting page."""
+        require_admin(request)
         records = store.by_device(ip_address)
         if not records:
             raise HTTPException(status_code=404, detail="Device not found")
@@ -490,8 +496,11 @@ def _register_backup_routes(
     """Register the global backup and status routes."""
 
     @app.post("/backup")
-    async def trigger_backup(background_tasks: BackgroundTasks, redirect: str = "/"):
+    async def trigger_backup(
+        request: Request, background_tasks: BackgroundTasks, redirect: str = "/"
+    ):
         """Back up all registered devices in the background."""
+        require_admin(request)
         scheduler.queue()
         background_tasks.add_task(
             scheduler.run_once, _manual_backup_ip_addresses(store)
@@ -514,9 +523,8 @@ def _settings_context(
     configuration: Configuration,
     store: BackupStore,
     scheduler: BackupScheduler,
-    **overrides: object,
 ) -> dict[str, object]:
-    """Build the template context for the settings page."""
+    """Build the base template context for the settings page."""
     interval = scheduler.interval
     next_run = scheduler.next_run
     next_run_value = next_run
@@ -544,7 +552,6 @@ def _settings_context(
         "discovery_error": None,
         "saved": False,
     }
-    context.update(overrides)
     return context
 
 
@@ -557,12 +564,17 @@ def _render_settings(
     status_code: int = 200,
     **overrides: object,
 ):
-    """Render the settings page with the current settings."""
+    """Render the settings page with the current settings and user accounts."""
+    context = _settings_context(configuration, store, scheduler)
+    context.update(
+        user_management_context(request.app.state.users, current_user(request))
+    )
+    context.update(overrides)
     return templates.TemplateResponse(
         request=request,
         name="settings.html",
         status_code=status_code,
-        context=_settings_context(configuration, store, scheduler, **overrides),
+        context=context,
     )
 
 
@@ -577,6 +589,7 @@ def _register_device_settings_routes(
     @app.post("/settings/discover")
     async def discover_devices(request: Request):
         """Discover Shelly devices and offer the ones not added yet."""
+        require_admin(request)
         try:
             discovered = await asyncio.to_thread(
                 discover_shelly_device_details, timeout=_DISCOVERY_TIMEOUT
@@ -605,8 +618,9 @@ def _register_device_settings_routes(
         )
 
     @app.post("/settings/discover/stream")
-    async def discover_devices_stream():
+    async def discover_devices_stream(request: Request):
         """Stream newly discovered devices as newline-delimited JSON."""
+        require_admin(request)
         return StreamingResponse(
             _discover_stream(_saved_ip_addresses(store)),
             media_type="application/x-ndjson",
@@ -619,6 +633,7 @@ def _register_device_settings_routes(
     @app.post("/settings/devices")
     async def add_devices(request: Request):
         """Add one or more device IP addresses to the settings."""
+        require_admin(request)
         body = (await request.body()).decode("utf-8", errors="replace")
         raw_values = parse_qs(body).get("ip_addresses", [])
         error = _save_device_ip_addresses(store, raw_values)
@@ -637,6 +652,7 @@ def _register_device_settings_routes(
     @app.post("/settings/devices/remove")
     async def remove_device(request: Request):
         """Remove a device IP address from the settings."""
+        require_admin(request)
         body = (await request.body()).decode("utf-8", errors="replace")
         raw_ip_address = parse_qs(body).get("ip_address", [""])[0]
         try:
@@ -663,6 +679,7 @@ def _register_retention_settings_routes(
     @app.post("/settings/retention")
     async def save_retention(request: Request):
         """Validate and persist the backup retention policy."""
+        require_admin(request)
         body = (await request.body()).decode("utf-8", errors="replace")
         form = parse_qs(body)
         values = {
@@ -687,6 +704,128 @@ def _register_retention_settings_routes(
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
 
+_SETTINGS_USERS_REDIRECT = "/settings?saved=1#users"
+
+
+def _parse_form_field(form: dict[str, list[str]], name: str) -> str:
+    """Return the last submitted value for a form field, or an empty string."""
+    values = form.get(name, [])
+    return values[-1] if values else ""
+
+
+def _register_user_settings_routes(
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+) -> None:
+    """Register the user management routes on the settings page."""
+
+    @app.get("/users")
+    async def users_redirect():
+        """Redirect the legacy users page to the settings page."""
+        return RedirectResponse(url="/settings", status_code=303)
+
+    @app.post("/settings/users")
+    async def add_user(request: Request):
+        """Create a new user account."""
+        require_admin(request)
+        users = request.app.state.users
+        body = (await request.body()).decode("utf-8", errors="replace")
+        form = parse_qs(body)
+        username = _parse_form_field(form, "username")
+        password = _parse_form_field(form, "password")
+        role = _parse_form_field(form, "role") or UserRole.VIEWER.value
+        try:
+            users.create_user(username, password, role)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=str(exc),
+                user_form={"username": username, "role": role},
+            )
+        return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
+
+
+def _register_user_detail_settings_routes(
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+) -> None:
+    """Register the per-user role, password, and delete routes."""
+
+    @app.post("/settings/users/{user_id}/role")
+    async def change_user_role(request: Request, user_id: int):
+        """Change the role of a user account."""
+        require_admin(request)
+        users = request.app.state.users
+        body = (await request.body()).decode("utf-8", errors="replace")
+        role = _parse_form_field(parse_qs(body), "role")
+        try:
+            users.change_role(user_id, role)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=str(exc),
+            )
+        return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
+
+    @app.post("/settings/users/{user_id}/password")
+    async def reset_user_password(request: Request, user_id: int):
+        """Set a new password for a user account."""
+        actor = require_admin(request)
+        users = request.app.state.users
+        body = (await request.body()).decode("utf-8", errors="replace")
+        password = _parse_form_field(parse_qs(body), "password")
+        try:
+            users.change_password(user_id, password)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=str(exc),
+            )
+        response = RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
+        if user_id == actor.user_id:
+            # Changing your own password invalidates the current session,
+            # so sign back in with a fresh one.
+            current = users.get_user(user_id)
+            if current is not None:
+                token = start_session(users, current)
+                with_session_cookie(response, token, users.session_max_age)
+        return response
+
+    @app.post("/settings/users/{user_id}/delete")
+    async def delete_user(request: Request, user_id: int):
+        """Delete a user account."""
+        actor = require_admin(request)
+        users = request.app.state.users
+        try:
+            users.delete_user(user_id, acting_user_id=actor.user_id)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=str(exc),
+            )
+        return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
+
+
 def _register_settings_routes(
     app: FastAPI,
     configuration: Configuration,
@@ -698,6 +837,7 @@ def _register_settings_routes(
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         """Show the application settings form."""
+        require_admin(request)
         return _render_settings(
             request,
             configuration,
@@ -709,6 +849,7 @@ def _register_settings_routes(
     @app.post("/settings")
     async def save_settings(request: Request):
         """Validate and persist the automatic backup schedule."""
+        require_admin(request)
         body = (await request.body()).decode("utf-8", errors="replace")
         form = parse_qs(body)
         automatic_backups = "automatic_backups" in form
@@ -767,6 +908,8 @@ def _register_settings_routes(
 
     _register_retention_settings_routes(app, configuration, store, scheduler)
     _register_device_settings_routes(app, configuration, store, scheduler)
+    _register_user_settings_routes(app, configuration, store, scheduler)
+    _register_user_detail_settings_routes(app, configuration, store, scheduler)
 
 
 def _register_routes(
@@ -849,10 +992,12 @@ def create_app(
     configuration: Configuration | None = None,
     store: BackupStore | None = None,
     scheduler: BackupScheduler | None = None,
+    users: UserStore | None = None,
 ) -> FastAPI:
     """Create the Shelly Backup web application."""
     configuration = configuration or Configuration()
     store = store or BackupStore(configuration.database_path())
+    users = users or UserStore(configuration.users_path())
     if scheduler is None:
         enabled, interval, next_run_at = _effective_schedule(configuration, store)
         scheduler = BackupScheduler(
@@ -876,6 +1021,8 @@ def create_app(
     app.state.configuration = configuration
     app.state.store = store
     app.state.scheduler = scheduler
+    app.state.users = users
+    register_auth(app, users)
     _register_routes(app, configuration, store, scheduler)
     return app
 

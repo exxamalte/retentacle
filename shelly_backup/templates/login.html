@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in - {{ application_name }}{% endblock %}
+
+{% block content %}
+  <section class="card settings-card" aria-label="Sign in">
+    <h2>Sign in</h2>
+    <p class="subtitle">Sign in to browse your Shelly device backups.</p>
+
+    {% if error %}
+      <div class="alert" role="alert" style="margin-top: 1rem;">
+        <strong>Sign in failed:</strong> {{ error }}
+      </div>
+    {% endif %}
+
+    <form method="post" action="/login" class="device-form">
+      <div class="form-field">
+        <label for="username">Username</label>
+        <input
+          class="input"
+          id="username"
+          name="username"
+          value="{{ username }}"
+          autocomplete="username"
+          autofocus
+          required
+        >
+      </div>
+      <div class="form-field">
+        <label for="password">Password</label>
+        <input
+          class="input"
+          type="password"
+          id="password"
+          name="password"
+          autocomplete="current-password"
+          required
+        >
+      </div>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Sign in</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

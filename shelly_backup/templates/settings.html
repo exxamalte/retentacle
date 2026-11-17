@@ -5,7 +5,7 @@
     <div>
       <h1>Settings</h1>
       <p class="subtitle">
-        Configure the backup schedule, retention, and devices.
+        Configure the backup schedule, retention, devices, and users.
       </p>
     </div>
   </div>
@@ -23,7 +23,7 @@
     </div>
   {% endif %}
 
-  <section class="card settings-card" aria-label="Backup schedule">
+  <section class="card settings-panel" aria-label="Backup schedule">
     <form method="post" action="/settings" data-schedule-form>
       <div class="form-field toggle-field">
         <label class="checkbox-label" for="automatic_backups">
@@ -123,7 +123,7 @@
     </div>
   </section>
 
-  <section class="card settings-card" aria-label="Backup retention">
+  <section class="card settings-panel" aria-label="Backup retention">
     <h2>Backup retention</h2>
     <p class="field-help">
       Retention runs after each successful backup and keeps the newest backup
@@ -208,7 +208,7 @@
     </form>
   </section>
 
-  <section class="card settings-card" aria-label="Devices">
+  <section class="card settings-panel" aria-label="Devices">
     <h2>Devices</h2>
     <p class="field-help">
       Devices added here are used for scheduled and manual backups. They
@@ -379,6 +379,8 @@
       </div>
     </form>
   </section>
+
+  {% include "settings_users.html" %}
 
   <p class="footer-note">
     Settings are stored in the backup database and override the configuration

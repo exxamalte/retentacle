@@ -256,7 +256,12 @@
       margin-bottom: 1.25rem;
     }
 
-    .settings-card h2 {
+    .settings-panel {
+      margin-bottom: 1.25rem;
+    }
+
+    .settings-card h2,
+    .settings-panel h2 {
       margin-bottom: 0.35rem;
     }
 
@@ -697,39 +702,51 @@
         <span class="brand-mark" aria-hidden="true">SB</span>
         <span class="brand-text">{{ application_name }}</span>
       </a>
+      {% set user = request.state.user %}
       <div class="header-actions">
-        <a
-          class="button"
-          href="/settings"
-          {% if request.url.path == '/settings' %}aria-current="page"{% endif %}
-        >Settings</a>
-        <form method="post" action="/backup?redirect={{ request.url.path }}">
-          <button class="button primary" type="submit">Run backup now</button>
-        </form>
+        {% if user %}
+          {% if user.role == 'admin' %}
+            <a
+              class="button"
+              href="/settings"
+              {% if request.url.path == '/settings' %}aria-current="page"{% endif %}
+            >Settings</a>
+            <form method="post" action="/backup?redirect={{ request.url.path }}">
+              <button class="button primary" type="submit">Run backup now</button>
+            </form>
+          {% endif %}
+          <span class="badge" title="Signed in as {{ user.role.label }}">{{ user.username }}</span>
+          <form method="post" action="/logout">
+            <button class="button" type="submit">Sign out</button>
+          </form>
+        {% endif %}
       </div>
     </div>
   </header>
   <main>
-    <div class="backup-progress" data-backup-progress hidden aria-live="polite">
-      <div class="backup-progress-header">
-        <span data-progress-title>Backup in progress…</span>
-        <span class="backup-progress-count" data-progress-count></span>
+    {% if request.state.user %}
+      <div class="backup-progress" data-backup-progress hidden aria-live="polite">
+        <div class="backup-progress-header">
+          <span data-progress-title>Backup in progress…</span>
+          <span class="backup-progress-count" data-progress-count></span>
+        </div>
+        <div
+          class="progress-track"
+          data-progress-track
+          role="progressbar"
+          aria-label="Backup progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        >
+          <div class="progress-fill" data-progress-fill></div>
+        </div>
       </div>
-      <div
-        class="progress-track"
-        data-progress-track
-        role="progressbar"
-        aria-label="Backup progress"
-        aria-valuemin="0"
-        aria-valuemax="100"
-        aria-valuenow="0"
-      >
-        <div class="progress-fill" data-progress-fill></div>
-      </div>
-    </div>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
-  <script>
+  {% if request.state.user %}
+    <script>
     (() => {
       const initialRunCount = Number("{{ request.app.state.scheduler.run_count }}");
       const initialActive = {{ 'true' if request.app.state.scheduler.active else 'false' }};
@@ -859,7 +876,8 @@
 
       poll();
     })();
-  </script>
+    </script>
+  {% endif %}
   {% block scripts %}{% endblock %}
 </body>
 </html>

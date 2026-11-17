@@ -1,0 +1,133 @@
+  <section class="card settings-panel" id="users" aria-label="Users">
+    <h2>Users</h2>
+    <p class="subtitle">
+      Manage the accounts that can access {{ application_name }}.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Username</th>
+            <th scope="col">Role</th>
+            <th scope="col">Created</th>
+            <th scope="col">New role</th>
+            <th scope="col">New password</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in user_rows %}
+            <tr>
+              <td>
+                <span class="device-name">{{ row.user.username }}</span>
+                {% if row.is_current %}
+                  <span class="badge" title="This is the account you are signed in with">You</span>
+                {% endif %}
+              </td>
+              <td><span class="badge{% if row.user.role == 'admin' %} success{% endif %}">{{ row.user.role.label }}</span></td>
+              <td>{{ row.user.created_at|format_timestamp }}</td>
+              <td>
+                <form method="post" action="/settings/users/{{ row.user.user_id }}/role" class="row-actions">
+                  <select class="input" name="role" aria-label="Role for {{ row.user.username }}">
+                    {% for role in user_role_values %}
+                      <option value="{{ role }}" {% if row.user.role == role %}selected{% endif %}>
+                        {% if role == 'admin' %}Administrator{% else %}Read-only{% endif %}
+                      </option>
+                    {% endfor %}
+                  </select>
+                  <button
+                    class="button small"
+                    type="submit"
+                    {% if not row.can_demote and row.user.role == 'admin' %}disabled{% endif %}
+                  >Update</button>
+                </form>
+              </td>
+              <td>
+                <form method="post" action="/settings/users/{{ row.user.user_id }}/password" class="row-actions">
+                  <input
+                    class="input"
+                    type="password"
+                    name="password"
+                    autocomplete="new-password"
+                    placeholder="At least 12 characters"
+                    minlength="12"
+                    pattern="(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,}"
+                    title="At least 12 characters, including one digit and one special character"
+                    aria-label="New password for {{ row.user.username }}"
+                    required
+                  >
+                  <button class="button small" type="submit">Reset</button>
+                </form>
+              </td>
+              <td>
+                <form method="post" action="/settings/users/{{ row.user.user_id }}/delete" class="row-actions">
+                  <button
+                    class="button small"
+                    type="submit"
+                    title="Delete {{ row.user.username }}"
+                    {% if not row.can_delete %}disabled{% endif %}
+                  >Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="device-form">
+      <h2>Add user</h2>
+      <p class="field-help">
+        Administrators can view and manage everything. Read-only users can
+        browse, view and download backups, but cannot change settings or run
+        new backups. Passwords need at least 12 characters, one digit and one
+        special character.
+      </p>
+      <form method="post" action="/settings/users">
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="new-username">Username</label>
+            <input
+              class="input"
+              id="new-username"
+              name="username"
+              value="{{ user_form.username }}"
+              autocomplete="off"
+              required
+            >
+          </div>
+          <div class="form-field">
+            <label for="new-password">Password</label>
+            <input
+              class="input"
+              type="password"
+              id="new-password"
+              name="password"
+              autocomplete="new-password"
+              minlength="12"
+              pattern="(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,}"
+              title="At least 12 characters, including one digit and one special character"
+              required
+            >
+          </div>
+          <div class="form-field">
+            <label for="new-role">Role</label>
+            <select class="input" id="new-role" name="role">
+              {% for role in user_role_values %}
+                <option
+                  value="{{ role }}"
+                  {% if user_form.role == role or (not user_form.role and role == 'viewer') %}selected{% endif %}
+                >
+                  {% if role == 'admin' %}Administrator{% else %}Read-only{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="button primary" type="submit">Add user</button>
+        </div>
+      </form>
+    </div>
+  </section>

@@ -123,14 +123,16 @@
                         aria-label="Open the web UI for {{ device.display_name }} in a new tab"
                       ><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
                     {% endif %}
-                    <form method="post" action="/devices/{{ device.ip_address }}/backup?redirect=/">
-                      <button
-                        class="button icon-button"
-                        type="submit"
-                        title="Back up this device now"
-                        aria-label="Back up {{ device.display_name }} now"
-                      ><svg class="icon" aria-hidden="true"><use href="#icon-backup"/></svg></button>
-                    </form>
+                    {% if request.state.user.role == 'admin' %}
+                      <form method="post" action="/devices/{{ device.ip_address }}/backup?redirect=/">
+                        <button
+                          class="button icon-button"
+                          type="submit"
+                          title="Back up this device now"
+                          aria-label="Back up {{ device.display_name }} now"
+                        ><svg class="icon" aria-hidden="true"><use href="#icon-backup"/></svg></button>
+                      </form>
+                    {% endif %}
                   </div>
                 </td>
               </tr>
@@ -143,12 +145,19 @@
     <section class="card empty">
       <h2>No backups yet</h2>
       <p>
-        The first backup will run automatically according to the configured
-        interval. You can also start one right now.
+        {% if request.state.user.role == 'admin' %}
+          The first backup will run automatically according to the configured
+          interval. You can also start one right now.
+        {% else %}
+          The first backup will run automatically according to the configured
+          interval. Ask an administrator to add devices and run the first backup.
+        {% endif %}
       </p>
-      <form method="post" action="/backup">
-        <button class="button primary" type="submit">Run backup now</button>
-      </form>
+      {% if request.state.user.role == 'admin' %}
+        <form method="post" action="/backup">
+          <button class="button primary" type="submit">Run backup now</button>
+        </form>
+      {% endif %}
     </section>
   {% endif %}
 

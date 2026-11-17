@@ -1,6 +1,14 @@
 # Changes
 
 ## 2026.5.0
+* Add user management with admin and read-only roles.
+* Onboard the initial admin account through a first-run setup wizard.
+* Require passwords with at least 12 characters, one digit and one special character.
+* Use the full page width for the settings panels, including the user list.
+* Require a login for all pages except the health endpoint.
+* Let read-only users view and download backups without changing settings or running backups.
+* Manage user accounts, roles, passwords, and deletion from the settings page.
+* Store user accounts and login sessions in a separate `shelly_backup_users.json` database with hashed passwords.
 * Run as a long-running server with scheduled backups.
 * Add a web UI for browsing backups per device and viewing raw backup data.
 * Add a manual per-device backup action on the device detail page.
