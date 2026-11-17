@@ -9,7 +9,7 @@ import ipaddress
 import json
 import logging
 import re
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, urlparse, urlsplit
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import (
@@ -35,6 +35,13 @@ from .discovery import (
     DiscoveredDevice,
     discover_shelly_device_details,
     iter_shelly_device_details,
+)
+from .oidc import (
+    DEFAULT_SCOPES,
+    OIDCError,
+    clear_discovery_cache,
+    discover_endpoints,
+    oidc_config_from_settings,
 )
 from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
@@ -519,6 +526,22 @@ def _register_backup_routes(
         return _scheduler_status(scheduler, store)
 
 
+def _oidc_form_context(store: BackupStore) -> dict[str, object]:
+    """Return the OIDC settings for the settings form, keeping the secret."""
+    config = oidc_config_from_settings(store.get_settings())
+    return {
+        "enabled": config.enabled,
+        "issuer": config.issuer,
+        "client_id": config.client_id,
+        "callback_url": config.callback_url,
+        "scopes": config.scopes,
+        "provider_name": config.provider_name,
+        "auto_create_users": config.auto_create_users,
+        "disable_password_login": config.disable_password_login,
+        "has_client_secret": bool(config.client_secret),
+    }
+
+
 def _settings_context(
     configuration: Configuration,
     store: BackupStore,
@@ -551,6 +574,7 @@ def _settings_context(
         "discovery_ran": False,
         "discovery_error": None,
         "saved": False,
+        "oidc": _oidc_form_context(store),
     }
     return context
 
@@ -707,6 +731,103 @@ def _register_retention_settings_routes(
 _SETTINGS_USERS_REDIRECT = "/settings?saved=1#users"
 
 
+def _is_http_url(value: str) -> bool:
+    """Whether the given value is an absolute http(s) URL."""
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _oidc_form_settings(
+    form: dict[str, list[str]], stored_settings: dict
+) -> tuple[dict, str | None]:
+    """Parse and validate the OIDC settings form values.
+
+    Returns the effective settings dict and a validation error message, if
+    any. A blank client secret keeps the previously stored one.
+    """
+    enabled = "oidc_enabled" in form
+    issuer = _parse_form_field(form, "oidc_issuer").strip().rstrip("/")
+    client_id = _parse_form_field(form, "oidc_client_id").strip()
+    client_secret = _parse_form_field(form, "oidc_client_secret")
+    callback_url = _parse_form_field(form, "oidc_callback_url").strip()
+    scopes = _parse_form_field(form, "oidc_scopes").strip()
+    provider_name = _parse_form_field(form, "oidc_provider_name").strip()[:50]
+    stored = oidc_config_from_settings(stored_settings)
+    if not client_secret:
+        client_secret = stored.client_secret
+    values = {
+        "enabled": enabled,
+        "issuer": issuer,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "callback_url": callback_url,
+        "scopes": scopes or DEFAULT_SCOPES,
+        "provider_name": provider_name,
+        "auto_create_users": "oidc_auto_create_users" in form,
+        "disable_password_login": "oidc_disable_password_login" in form and enabled,
+    }
+    error: str | None = None
+    if enabled:
+        if not _is_http_url(issuer):
+            error = "Enter an OIDC issuer URL starting with http:// or https://."
+        elif not client_id:
+            error = "Enter the OIDC client ID."
+        elif callback_url and not _is_http_url(callback_url):
+            error = (
+                "Enter the callback URL including http:// or https://,"
+                " or leave it empty."
+            )
+        elif values["disable_password_login"] and not client_secret:
+            error = "Enter the OIDC client secret before disabling password sign-in."
+    return values, error
+
+
+def _register_oidc_settings_routes(
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+) -> None:
+    """Register the OpenID Connect settings route on the settings page."""
+
+    @app.post("/settings/oidc")
+    async def save_oidc(request: Request):
+        """Validate and persist the OpenID Connect settings."""
+        require_admin(request)
+        body = (await request.body()).decode("utf-8", errors="replace")
+        oidc, error = _oidc_form_settings(parse_qs(body), store.get_settings())
+        if error is None and oidc["disable_password_login"]:
+            try:
+                await asyncio.to_thread(discover_endpoints, oidc["issuer"])
+            except OIDCError as exc:
+                error = (
+                    "The OIDC provider could not be verified, so password"
+                    f" sign-in stays enabled: {exc}"
+                )
+        if error is not None:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=error,
+                oidc={
+                    key: value for key, value in oidc.items() if key != "client_secret"
+                }
+                | {"has_client_secret": bool(oidc["client_secret"])},
+            )
+
+        settings = store.get_settings()
+        settings["oidc"] = oidc
+        store.save_settings(settings)
+        clear_discovery_cache()
+        return RedirectResponse(url="/settings?saved=1#oidc", status_code=303)
+
+
 def _parse_form_field(form: dict[str, list[str]], name: str) -> str:
     """Return the last submitted value for a form field, or an empty string."""
     values = form.get(name, [])
@@ -733,11 +854,11 @@ def _register_user_settings_routes(
         users = request.app.state.users
         body = (await request.body()).decode("utf-8", errors="replace")
         form = parse_qs(body)
-        username = _parse_form_field(form, "username")
+        email = _parse_form_field(form, "email")
         password = _parse_form_field(form, "password")
         role = _parse_form_field(form, "role") or UserRole.VIEWER.value
         try:
-            users.create_user(username, password, role)
+            users.create_user(email, password, role)
         except ValueError as exc:
             return _render_settings(
                 request,
@@ -746,7 +867,7 @@ def _register_user_settings_routes(
                 scheduler,
                 status_code=400,
                 error=str(exc),
-                user_form={"username": username, "role": role},
+                user_form={"email": email, "role": role},
             )
         return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
 
@@ -908,6 +1029,7 @@ def _register_settings_routes(
 
     _register_retention_settings_routes(app, configuration, store, scheduler)
     _register_device_settings_routes(app, configuration, store, scheduler)
+    _register_oidc_settings_routes(app, configuration, store, scheduler)
     _register_user_settings_routes(app, configuration, store, scheduler)
     _register_user_detail_settings_routes(app, configuration, store, scheduler)
 
@@ -1022,7 +1144,7 @@ def create_app(
     app.state.store = store
     app.state.scheduler = scheduler
     app.state.users = users
-    register_auth(app, users)
+    register_auth(app, users, store)
     _register_routes(app, configuration, store, scheduler)
     return app
 

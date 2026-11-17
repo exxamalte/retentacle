@@ -380,6 +380,178 @@
     </form>
   </section>
 
+  <section class="card settings-panel" id="oidc" aria-label="Single sign-on">
+    <h2>Single sign-on (OpenID Connect)</h2>
+    <p class="subtitle">
+      Let users sign in through your identity provider. Accounts are matched
+      by email address.
+    </p>
+
+    <form method="post" action="/settings/oidc" class="device-form">
+      <div class="form-field toggle-field">
+        <label class="checkbox-label" for="oidc_enabled">
+          <input
+            type="checkbox"
+            id="oidc_enabled"
+            name="oidc_enabled"
+            value="on"
+            {% if oidc.enabled %}checked{% endif %}
+          >
+          <span>Enable OpenID Connect sign-in</span>
+        </label>
+        <p class="field-help">
+          The provider is discovered automatically from the issuer URL. A
+          <strong>Sign in with …</strong> button appears on the login page
+          once the connection is configured.
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_provider_name">Provider name (optional)</label>
+        <input
+          class="input"
+          id="oidc_provider_name"
+          name="oidc_provider_name"
+          value="{{ oidc.provider_name }}"
+          placeholder="e.g. Keycloak"
+          maxlength="50"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p class="field-help">
+          Shown on the login button, for example "Sign in with Keycloak".
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_issuer">Issuer URL</label>
+        <input
+          class="input"
+          id="oidc_issuer"
+          name="oidc_issuer"
+          type="url"
+          value="{{ oidc.issuer }}"
+          placeholder="https://id.example.com/realms/main"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p class="field-help">
+          Base URL of the provider. Its well-known OpenID configuration is
+          used to find all endpoints.
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_client_id">Client ID</label>
+        <input
+          class="input"
+          id="oidc_client_id"
+          name="oidc_client_id"
+          value="{{ oidc.client_id }}"
+          placeholder="shelly-backup"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_client_secret">Client secret</label>
+        <input
+          class="input"
+          type="password"
+          id="oidc_client_secret"
+          name="oidc_client_secret"
+          value=""
+          autocomplete="new-password"
+          {% if oidc.has_client_secret %}
+            placeholder="Stored — leave blank to keep it"
+          {% else %}
+            placeholder="Required to enable sign-in"
+          {% endif %}
+        >
+        <p class="field-help">
+          Stored unencrypted in the settings database; keep that file
+          protected.
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_scopes">Scopes</label>
+        <input
+          class="input"
+          id="oidc_scopes"
+          name="oidc_scopes"
+          value="{{ oidc.scopes }}"
+          placeholder="openid email profile"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p class="field-help">
+          Must include "openid email" so users can be identified.
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_callback_url">Callback URL (optional)</label>
+        <input
+          class="input"
+          id="oidc_callback_url"
+          name="oidc_callback_url"
+          type="url"
+          value="{{ oidc.callback_url }}"
+          placeholder="https://backup.example.com/oidc/callback"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p class="field-help">
+          The exact redirect URI registered with your provider. Leave empty
+          to derive it from the current request — useful when running behind
+          a reverse proxy with a different scheme or host.
+        </p>
+      </div>
+
+      <div class="form-field toggle-field">
+        <label class="checkbox-label" for="oidc_auto_create_users">
+          <input
+            type="checkbox"
+            id="oidc_auto_create_users"
+            name="oidc_auto_create_users"
+            value="on"
+            {% if oidc.auto_create_users %}checked{% endif %}
+          >
+          <span>Automatically create accounts for new OIDC users</span>
+        </label>
+        <p class="field-help">
+          People who sign in via the provider without a matching account get
+          a read-only account automatically. Promote them in the Users
+          section below.
+        </p>
+      </div>
+
+      <div class="form-field toggle-field">
+        <label class="checkbox-label" for="oidc_disable_password_login">
+          <input
+            type="checkbox"
+            id="oidc_disable_password_login"
+            name="oidc_disable_password_login"
+            value="on"
+            {% if oidc.disable_password_login %}checked{% endif %}
+          >
+          <span>Disable local password sign-in</span>
+        </label>
+        <p class="field-help">
+          Only OIDC can sign in then. The provider connection is verified
+          before this takes effect, so you cannot lock yourself out through
+          an unreachable issuer.
+        </p>
+      </div>
+
+      <div class="form-actions">
+        <button class="button primary" type="submit">Save single sign-on settings</button>
+      </div>
+    </form>
+  </section>
+
   {% include "settings_users.html" %}
 
   <p class="footer-note">

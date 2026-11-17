@@ -4,13 +4,14 @@ from datetime import UTC, datetime, timedelta
 import tempfile
 
 import pytest
+from tinydb import TinyDB
 
 from shelly_backup.users import (
     User,
     UserRole,
     UserStore,
+    validate_email,
     validate_password,
-    validate_username,
 )
 
 
@@ -20,34 +21,35 @@ def _store(tmpdir, **kwargs):
 
 
 class TestValidation:
-    """Tests for the username and password validation helpers."""
+    """Tests for the email and password validation helpers."""
 
-    def test_validate_username(self):
-        """Test that valid usernames are accepted and trimmed."""
-        assert validate_username("  admin_1@corp-x ") == "admin_1@corp-x"
+    def test_validate_email(self):
+        """Test that valid email addresses are accepted and trimmed."""
+        assert validate_email("  user@Example.com ") == "user@Example.com"
 
-    def test_validate_username_rejects_empty(self):
-        """Test that empty usernames are rejected."""
-        with pytest.raises(ValueError, match="Enter a username"):
-            validate_username("   ")
+    def test_validate_email_rejects_empty(self):
+        """Test that empty email addresses are rejected."""
+        with pytest.raises(ValueError, match="Enter an email address"):
+            validate_email("   ")
 
-    def test_validate_username_rejects_too_long(self):
-        """Test that long usernames are rejected."""
+    def test_validate_email_rejects_too_long(self):
+        """Test that long email addresses are rejected."""
         with pytest.raises(ValueError, match="longer than"):
-            validate_username("u" * 100)
+            validate_email(f"{'u' * 250}@example.com")
 
-    def test_validate_username_rejects_invalid_characters(self):
-        """Test that usernames with invalid characters are rejected."""
-        with pytest.raises(ValueError, match="letters"):
-            validate_username("admin name!")
-
-    def test_validate_username_rejects_invalid_first_character(self):
-        """Test that usernames must start with a letter or digit."""
-        with pytest.raises(ValueError, match="letters"):
-            validate_username("_admin")
+    def test_validate_email_rejects_invalid_shapes(self):
+        """Test that malformed email addresses are rejected."""
+        for value in (
+            "not-an-email",
+            "user@example",
+            "user example.com",
+            "@example.com",
+        ):
+            with pytest.raises(ValueError, match="valid email address"):
+                validate_email(value)
 
     def test_validate_password(self):
-        """Test that a long enough password is accepted."""
+        """Test that a strong enough password is accepted."""
         assert validate_password("password-1234") == "password-1234"
 
     def test_validate_password_rejects_short(self):
@@ -99,47 +101,82 @@ class TestUserStore:
             assert store.list_users() == []
 
     def test_create_and_list_users(self):
-        """Test creating users and listing them sorted by username."""
+        """Test creating users and listing them sorted by email address."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            viewer = store.create_user("viewer", "password-1234", UserRole.VIEWER)
-            admin = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            viewer = store.create_user(
+                "viewer@example.com", "password-1234", UserRole.VIEWER
+            )
+            admin = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
             users = store.list_users()
 
-            assert [user.username for user in users] == ["admin", "viewer"]
+            assert [user.email for user in users] == [
+                "admin@example.com",
+                "viewer@example.com",
+            ]
             assert admin.role is UserRole.ADMIN
             assert viewer.role is UserRole.VIEWER
             assert store.has_users() is True
             assert store.get_user(viewer.user_id) == viewer
             assert store.get_user(999) is None
 
+    def test_get_user_by_email(self):
+        """Test looking users up by email address, ignoring case."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _store(tmpdir)
+            user = store.create_user(
+                "Admin@Example.com", "password-1234", UserRole.ADMIN
+            )
+
+            assert store.get_user_by_email("admin@example.com") == user
+            assert store.get_user_by_email("  ADMIN@example.com ") == user
+            assert store.get_user_by_email("nobody@example.com") is None
+            assert store.get_user_by_email("") is None
+
     def test_create_user_validates_input(self):
         """Test that invalid user data is rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
 
-            with pytest.raises(ValueError, match="Enter a username"):
+            with pytest.raises(ValueError, match="Enter an email address"):
                 store.create_user("", "password-1234", UserRole.VIEWER)
+            with pytest.raises(ValueError, match="valid email address"):
+                store.create_user("not-an-email", "password-1234", UserRole.VIEWER)
             with pytest.raises(ValueError, match="at least 12"):
-                store.create_user("user", "short", UserRole.VIEWER)
+                store.create_user("user@example.com", "short", UserRole.VIEWER)
             with pytest.raises(ValueError, match="Invalid role"):
-                store.create_user("user", "password-1234", "root")
+                store.create_user("user@example.com", "password-1234", "root")
 
-    def test_create_user_rejects_duplicate_username_case_insensitive(self):
-        """Test that usernames are unique regardless of case."""
+    def test_create_user_rejects_duplicate_email_case_insensitive(self):
+        """Test that email addresses are unique regardless of case."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            store.create_user("Admin", "password-1234", UserRole.ADMIN)
+            store.create_user("Admin@Example.com", "password-1234", UserRole.ADMIN)
 
-            with pytest.raises(ValueError, match="already taken"):
-                store.create_user("admin", "password-1234", UserRole.VIEWER)
+            with pytest.raises(ValueError, match="already in use"):
+                store.create_user("admin@example.com", "password-1234", UserRole.VIEWER)
+
+    def test_create_user_without_password(self):
+        """Test that OIDC-managed accounts can be created without a password."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _store(tmpdir)
+            user = store.create_user("sso@example.com", None, UserRole.VIEWER)
+
+            assert store.verify_credentials("sso@example.com", "password-1234") is None
+            assert store.verify_credentials("sso@example.com", "") is None
+
+            store.change_password(user.user_id, "password-1234")
+
+            assert store.verify_credentials("sso@example.com", "password-1234") == user
 
     def test_password_is_stored_hashed(self):
         """Test that plain passwords never reach the database file."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            store.create_user("admin", "password-1234", UserRole.ADMIN)
+            store.create_user("admin@example.com", "password-1234", UserRole.ADMIN)
 
             with open(f"{tmpdir}/users.json") as handle:
                 contents = handle.read()
@@ -151,36 +188,52 @@ class TestUserStore:
         """Test verifying correct and incorrect credentials."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            created = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            created = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
-            assert store.verify_credentials("admin", "password-1234") == created
-            assert store.verify_credentials("ADMIN ", "password-1234") == created
-            assert store.verify_credentials("admin", "wrong-password") is None
-            assert store.verify_credentials("ghost", "password-1234") is None
+            assert store.verify_credentials("admin@example.com", "password-1234") == (
+                created
+            )
+            assert store.verify_credentials("ADMIN@example.com ", "password-1234") == (
+                created
+            )
+            assert store.verify_credentials("admin@example.com", "wrong") is None
+            assert (
+                store.verify_credentials("ghost@example.com", "password-1234") is None
+            )
 
     def test_verify_credentials_without_database(self):
         """Test that verifying against a missing store fails gracefully."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
 
-            assert store.verify_credentials("admin", "password-1234") is None
+            assert (
+                store.verify_credentials("admin@example.com", "password-1234") is None
+            )
 
     def test_change_password(self):
         """Test that a password change takes effect immediately."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
             store.change_password(user.user_id, "password-5678")
 
-            assert store.verify_credentials("admin", "password-1234") is None
-            assert store.verify_credentials("admin", "password-5678") is not None
+            assert (
+                store.verify_credentials("admin@example.com", "password-1234") is None
+            )
+            assert store.verify_credentials("admin@example.com", "password-5678")
 
     def test_change_password_rejects_invalid(self):
         """Test that password rules also apply to changes."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
             with pytest.raises(ValueError, match="at least 12"):
                 store.change_password(user.user_id, "short")
@@ -191,8 +244,10 @@ class TestUserStore:
         """Test changing the role of a user."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            store.create_user("second", "password-1234", UserRole.ADMIN)
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            store.create_user("second@example.com", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
             store.change_role(user.user_id, "viewer")
 
@@ -202,7 +257,9 @@ class TestUserStore:
         """Test that the last admin cannot be demoted."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            admin = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            admin = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
             with pytest.raises(ValueError, match="last admin"):
                 store.change_role(admin.user_id, "viewer")
@@ -213,8 +270,12 @@ class TestUserStore:
         """Test deleting a user account."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            admin = store.create_user("admin", "password-1234", UserRole.ADMIN)
-            other = store.create_user("other", "password-1234", UserRole.ADMIN)
+            admin = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
+            other = store.create_user(
+                "other@example.com", "password-1234", UserRole.ADMIN
+            )
 
             store.delete_user(other.user_id, acting_user_id=admin.user_id)
 
@@ -224,7 +285,9 @@ class TestUserStore:
         """Test that unknown and own accounts cannot be deleted."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            admin = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            admin = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
             with pytest.raises(ValueError, match="not found"):
                 store.delete_user(999)
@@ -235,13 +298,40 @@ class TestUserStore:
         """Test that the last admin account cannot be deleted."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            admin = store.create_user("admin", "password-1234", UserRole.ADMIN)
-            other_admin = store.create_user("second", "password-1234", UserRole.ADMIN)
+            admin = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
+            other_admin = store.create_user(
+                "second@example.com", "password-1234", UserRole.ADMIN
+            )
 
             store.delete_user(other_admin.user_id, acting_user_id=admin.user_id)
 
             with pytest.raises(ValueError, match="last admin"):
                 store.delete_user(admin.user_id)
+
+    def test_legacy_username_documents_are_accepted(self):
+        """Test that older databases storing 'username' still load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = f"{tmpdir}/users.json"
+            db = TinyDB(path)
+            try:
+                db.table("users").insert(
+                    {
+                        "username": "oldadmin",
+                        "password_hash": "pbkdf2_sha256$1$00$00",
+                        "role": "admin",
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                    }
+                )
+            finally:
+                db.close()
+            store = _store(tmpdir)
+
+            users = store.list_users()
+
+            assert [user.email for user in users] == ["oldadmin"]
+            assert store.get_user_by_email("OLDADMIN") == users[0]
 
 
 class TestSessions:
@@ -251,7 +341,9 @@ class TestSessions:
         """Test that a session token resolves to its user."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
             token = store.create_session(user.user_id)
 
@@ -271,7 +363,9 @@ class TestSessions:
         """Test ending a session."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
             token = store.create_session(user.user_id)
 
             store.delete_session(token)
@@ -284,7 +378,9 @@ class TestSessions:
         """Test that sessions past their lifetime are rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir, session_max_age=timedelta(seconds=-10))
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
             token = store.create_session(user.user_id)
 
             assert store.resolve_session(token) is None
@@ -293,8 +389,12 @@ class TestSessions:
         """Test that deleting a user invalidates its sessions."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            admin = store.create_user("admin", "password-1234", UserRole.ADMIN)
-            other = store.create_user("other", "password-1234", UserRole.VIEWER)
+            admin = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
+            other = store.create_user(
+                "other@example.com", "password-1234", UserRole.VIEWER
+            )
             token = store.create_session(other.user_id)
 
             store.delete_user(other.user_id, acting_user_id=admin.user_id)
@@ -305,7 +405,9 @@ class TestSessions:
         """Test that changing a password ends the sessions of that user."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
             token = store.create_session(user.user_id)
 
             store.change_password(user.user_id, "password-5678")
@@ -316,7 +418,9 @@ class TestSessions:
         """Test that raw session tokens are not persisted."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
             token = store.create_session(user.user_id)
             with open(f"{tmpdir}/users.json") as handle:
                 contents = handle.read()
@@ -327,9 +431,11 @@ class TestSessions:
         """Test that created users carry sane metadata."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _store(tmpdir)
-            user = store.create_user("admin", "password-1234", UserRole.ADMIN)
+            user = store.create_user(
+                "admin@example.com", "password-1234", UserRole.ADMIN
+            )
 
             assert isinstance(user, User)
-            assert user.username == "admin"
+            assert user.email == "admin@example.com"
             assert user.created_at.tzinfo is not None
             assert user.created_at <= datetime.now(UTC) + timedelta(minutes=1)

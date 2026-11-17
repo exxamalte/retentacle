@@ -1,21 +1,36 @@
 """Authentication, session, and user management for the web server."""
 
+import asyncio
 from datetime import timedelta
 import logging
+import secrets
+import time
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from .oidc import (
+    OIDCConfig,
+    OIDCError,
+    authorization_url,
+    discover_endpoints,
+    exchange_code,
+    fetch_userinfo,
+    oidc_config_from_settings,
+)
+from .storage import BackupStore
 from .templating import templates
 from .users import User, UserRole, UserStore
 
 _LOGGER = logging.getLogger(__name__)
 
 SESSION_COOKIE = "shelly_backup_session"
-_PUBLIC_PATHS = frozenset({"/health"})
+_HEALTH_PATH = "/health"
+_PUBLIC_PATHS = frozenset({"/health", "/oidc/login", "/oidc/callback"})
 _SETUP_PATHS = frozenset({"/setup"})
 _LOGIN_PATHS = frozenset({"/login"})
+_OIDC_STATE_TTL = 300.0
 
 
 def current_user(request: Request) -> User | None:
@@ -36,6 +51,12 @@ def require_admin(request: Request) -> User:
     return user
 
 
+def password_login_allowed(settings: dict) -> bool:
+    """Whether local email and password sign-in is currently enabled."""
+    config = oidc_config_from_settings(settings)
+    return not (config.enabled and config.disable_password_login)
+
+
 def _parse_body(body: bytes) -> dict[str, str]:
     """Parse an urlencoded request body into single string values."""
     return {
@@ -54,7 +75,7 @@ async def _form(request: Request) -> dict[str, str]:
 def start_session(users: UserStore, user: User) -> str:
     """Create a login session and return its token."""
     token = users.create_session(user.user_id)
-    _LOGGER.info("User %s signed in", user.username)
+    _LOGGER.info("User %s signed in", user.email)
     return token
 
 
@@ -101,8 +122,32 @@ def user_management_context(users: UserStore, actor: User | None) -> dict:
     return {
         "user_rows": rows,
         "user_role_values": [role.value for role in UserRole],
-        "user_form": {"username": "", "role": UserRole.VIEWER.value},
+        "user_form": {"email": "", "role": UserRole.VIEWER.value},
     }
+
+
+def _render_login(
+    request: Request,
+    store: BackupStore,
+    *,
+    error: str | None = None,
+    email: str = "",
+    status_code: int = 200,
+):
+    """Render the login page with the current sign-in options."""
+    config = oidc_config_from_settings(store.get_settings())
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        status_code=status_code,
+        context={
+            "error": error,
+            "email": email,
+            "oidc_enabled": config.ready,
+            "oidc_provider_name": config.provider_name or "your account provider",
+            "password_login_enabled": password_login_allowed(store.get_settings()),
+        },
+    )
 
 
 def _register_setup_routes(app: FastAPI, users: UserStore) -> None:
@@ -114,7 +159,7 @@ def _register_setup_routes(app: FastAPI, users: UserStore) -> None:
         return templates.TemplateResponse(
             request=request,
             name="setup.html",
-            context={"error": None, "username": ""},
+            context={"error": None, "email": ""},
         )
 
     @app.post("/setup")
@@ -123,7 +168,7 @@ def _register_setup_routes(app: FastAPI, users: UserStore) -> None:
         if users.has_users():
             return RedirectResponse(url="/login", status_code=303)
         form = await _form(request)
-        username = form.get("username", "")
+        email = form.get("email", "")
         password = form.get("password", "")
         confirm = form.get("confirm_password", "")
         error: str | None = None
@@ -132,7 +177,7 @@ def _register_setup_routes(app: FastAPI, users: UserStore) -> None:
             error = "The two passwords do not match."
         else:
             try:
-                user = users.create_user(username, password, UserRole.ADMIN)
+                user = users.create_user(email, password, UserRole.ADMIN)
             except ValueError as exc:
                 error = str(exc)
         if error is not None or user is None:
@@ -140,42 +185,45 @@ def _register_setup_routes(app: FastAPI, users: UserStore) -> None:
                 request=request,
                 name="setup.html",
                 status_code=400,
-                context={"error": error, "username": username},
+                context={"error": error, "email": email},
             )
         token = start_session(users, user)
         response = RedirectResponse(url="/", status_code=303)
         return with_session_cookie(response, token, users.session_max_age)
 
 
-def _register_login_routes(app: FastAPI, users: UserStore) -> None:
+def _register_login_routes(app: FastAPI, users: UserStore, store: BackupStore) -> None:
     """Register the login and logout routes."""
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request):
         """Show the login form."""
-        return templates.TemplateResponse(
-            request=request,
-            name="login.html",
-            context={"error": None, "username": ""},
-        )
+        return _render_login(request, store)
 
     @app.post("/login")
     async def login(request: Request):
         """Validate the submitted credentials and start a session."""
         form = await _form(request)
-        username = form.get("username", "")
+        email = form.get("email", "")
         password = form.get("password", "")
-        user = users.verify_credentials(username, password)
+        if not password_login_allowed(store.get_settings()):
+            _LOGGER.warning("Rejected local login while password sign-in is disabled")
+            return _render_login(
+                request,
+                store,
+                error="Password sign-in is disabled on this server.",
+                email=email,
+                status_code=403,
+            )
+        user = users.verify_credentials(email, password)
         if user is None:
-            _LOGGER.warning("Failed login attempt for username: %r", username)
-            return templates.TemplateResponse(
-                request=request,
-                name="login.html",
+            _LOGGER.warning("Failed login attempt for email: %r", email)
+            return _render_login(
+                request,
+                store,
+                error="Invalid email or password.",
+                email=email,
                 status_code=401,
-                context={
-                    "error": "Invalid username or password.",
-                    "username": username,
-                },
             )
         token = start_session(users, user)
         response = RedirectResponse(url="/", status_code=303)
@@ -189,12 +237,166 @@ def _register_login_routes(app: FastAPI, users: UserStore) -> None:
         return clear_session_cookie(response)
 
 
+def _oidc_redirect_uri(request: Request, config: OIDCConfig) -> str:
+    """Return the callback URI that the provider should redirect back to.
+
+    Uses the configured callback URL verbatim so it matches the redirect URI
+    registered at the provider; otherwise it derives one from the request.
+    """
+    if config.callback_url:
+        return config.callback_url
+    base = str(request.base_url).rstrip("/")
+    return f"{base}/oidc/callback"
+
+
+async def _oidc_verified_email(config: OIDCConfig, code: str, redirect_uri: str) -> str:
+    """Return the verified email address for an authorization code.
+
+    Identity is anchored on the userinfo endpoint: the access token was just
+    exchanged at the provider's own token endpoint, so a successful userinfo
+    call proves the profile belongs to the authenticated user.
+    """
+    endpoints = await asyncio.to_thread(discover_endpoints, config.issuer)
+    access_token = await asyncio.to_thread(
+        exchange_code, config, endpoints, code, redirect_uri
+    )
+    profile = await asyncio.to_thread(fetch_userinfo, endpoints, access_token)
+    if profile.get("email_verified") is False:
+        raise ValueError("The email address of your OIDC account is not verified.")
+    email = str(profile.get("email") or "").strip()
+    if not email:
+        raise ValueError("The OIDC profile did not include an email address.")
+    return email
+
+
+def _oidc_local_user(users: UserStore, config: OIDCConfig, email: str) -> User | None:
+    """Return the account for an OIDC email, creating it when allowed."""
+    user = users.get_user_by_email(email)
+    if user is None and config.auto_create_users:
+        user = users.create_user(email, None, UserRole.VIEWER)
+        _LOGGER.info("Created read-only account for OIDC user %s", email)
+    return user
+
+
+async def _oidc_start_login(
+    request: Request,
+    store: BackupStore,
+    pending_states: dict[str, tuple[float, str]],
+):
+    """Return the redirect to the provider, or the login page on failure."""
+    config = oidc_config_from_settings(store.get_settings())
+    if not config.ready:
+        return _render_login(
+            request,
+            store,
+            error="OpenID Connect sign-in is not configured.",
+            status_code=400,
+        )
+    try:
+        endpoints = await asyncio.to_thread(discover_endpoints, config.issuer)
+    except OIDCError as exc:
+        _LOGGER.warning("OIDC discovery failed: %s", exc)
+        return _render_login(request, store, error=str(exc), status_code=400)
+    now = time.monotonic()
+    for key in [key for key, (expires, _) in pending_states.items() if expires <= now]:
+        pending_states.pop(key, None)
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    redirect_uri = _oidc_redirect_uri(request, config)
+    pending_states[state] = (now + _OIDC_STATE_TTL, redirect_uri)
+    url = authorization_url(config, endpoints, redirect_uri, state, nonce)
+    return RedirectResponse(url=url, status_code=302)
+
+
+async def _oidc_process_callback(
+    request: Request,
+    store: BackupStore,
+    users: UserStore,
+    pending_states: dict[str, tuple[float, str]],
+    *,
+    code: str,
+    state: str,
+    error: str,
+):
+    """Resolve an OIDC callback into a session or a login page failure."""
+    config = oidc_config_from_settings(store.get_settings())
+    stored = pending_states.pop(state, None) if state else None
+    if not config.ready:
+        return _render_login(
+            request,
+            store,
+            error="OpenID Connect sign-in is not configured.",
+            status_code=400,
+        )
+    if error:
+        return _render_login(
+            request,
+            store,
+            error=f"The OIDC provider reported an error: {error}.",
+            status_code=400,
+        )
+    if not code or stored is None or stored[0] <= time.monotonic():
+        return _render_login(
+            request,
+            store,
+            error="The sign-in attempt is invalid or expired. Try again.",
+            status_code=400,
+        )
+    try:
+        email = await _oidc_verified_email(config, code, stored[1])
+        user = _oidc_local_user(users, config, email)
+    except (OIDCError, ValueError) as exc:
+        _LOGGER.warning("OIDC sign-in failed: %s", exc)
+        return _render_login(request, store, error=str(exc), status_code=401)
+    if user is None:
+        return _render_login(
+            request,
+            store,
+            error=f"No local account exists for {email}.",
+            email=email,
+            status_code=403,
+        )
+    token = start_session(users, user)
+    response = RedirectResponse(url="/", status_code=303)
+    return with_session_cookie(response, token, users.session_max_age)
+
+
+def _register_oidc_routes(app: FastAPI, users: UserStore, store: BackupStore) -> None:
+    """Register the OpenID Connect login and callback routes."""
+    # Issued states are remembered briefly, together with the redirect URI
+    # used at login, so the callback can be matched to its login attempt.
+    pending_states: dict[str, tuple[float, str]] = {}
+
+    @app.get("/oidc/login")
+    async def oidc_login(request: Request):
+        """Start the OpenID Connect authorization code flow."""
+        return await _oidc_start_login(request, store, pending_states)
+
+    @app.get("/oidc/callback", response_class=HTMLResponse)
+    async def oidc_callback(
+        request: Request, code: str = "", state: str = "", error: str = ""
+    ):
+        """Complete the OpenID Connect flow and sign the user in."""
+        return await _oidc_process_callback(
+            request,
+            store,
+            users,
+            pending_states,
+            code=code,
+            state=state,
+            error=error,
+        )
+
+
 def _redirect_target(path: str, user: User | None, has_users: bool) -> str | None:
     """Return the path to redirect to, if this request may not continue."""
-    if path in _PUBLIC_PATHS:
+    if path == _HEALTH_PATH:
         return None
     if not has_users:
+        # During first-run setup only the setup wizard is reachable.
         return None if path in _SETUP_PATHS else "/setup"
+    if path in _PUBLIC_PATHS:
+        return None
     if path in _SETUP_PATHS:
         return "/login"
     if path in _LOGIN_PATHS:
@@ -217,8 +419,9 @@ def _register_middleware(app: FastAPI, users: UserStore) -> None:
         return await call_next(request)
 
 
-def register_auth(app: FastAPI, users: UserStore) -> None:
-    """Register authentication middleware, setup, and login pages."""
+def register_auth(app: FastAPI, users: UserStore, store: BackupStore) -> None:
+    """Register authentication middleware, login pages, and OIDC routes."""
     _register_middleware(app, users)
     _register_setup_routes(app, users)
-    _register_login_routes(app, users)
+    _register_login_routes(app, users, store)
+    _register_oidc_routes(app, users, store)

@@ -15,7 +15,7 @@ from tinydb import Query, TinyDB
 
 MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_LENGTH = 128
-MAX_USERNAME_LENGTH = 64
+MAX_EMAIL_LENGTH = 254
 PBKDF2_ITERATIONS = 240000
 SESSION_MAX_AGE = timedelta(days=30)
 
@@ -24,7 +24,7 @@ _SESSIONS_TABLE = "sessions"
 _HASH_NAME = "pbkdf2_sha256"
 _DUMMY_PASSWORD = "dummy-password-for-timing-equality"
 
-_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]*$")
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PASSWORD_DIGIT_PATTERN = re.compile(r"[0-9]")
 _PASSWORD_SPECIAL_PATTERN = re.compile(r"[^A-Za-z0-9]")
 
@@ -66,25 +66,22 @@ class User:
     """A user account."""
 
     user_id: int
-    username: str
+    email: str
     role: UserRole
     created_at: datetime
 
 
-def validate_username(username: object) -> str:
-    """Return a validated username, raising ValueError when invalid."""
-    value = str(username or "").strip()
+def validate_email(email: object) -> str:
+    """Return a validated email address, raising ValueError when invalid."""
+    value = str(email or "").strip()
     if not value:
-        raise ValueError("Enter a username.")
-    if len(value) > MAX_USERNAME_LENGTH:
+        raise ValueError("Enter an email address.")
+    if len(value) > MAX_EMAIL_LENGTH:
         raise ValueError(
-            f"Usernames cannot be longer than {MAX_USERNAME_LENGTH} characters."
+            f"Email addresses cannot be longer than {MAX_EMAIL_LENGTH} characters."
         )
-    if not _USERNAME_PATTERN.fullmatch(value):
-        raise ValueError(
-            "Usernames can only contain letters, digits, and the characters"
-            " '.', '_', '@' and '-'."
-        )
+    if not _EMAIL_PATTERN.fullmatch(value):
+        raise ValueError("Enter a valid email address, like user@example.com.")
     return value
 
 
@@ -145,8 +142,10 @@ def _token_hash(token: str) -> str:
 def _user_from_document(document: Any) -> User | None:
     """Convert a users table document into a User, if valid."""
     user_id = getattr(document, "doc_id", None)
-    username = document.get("username")
-    if user_id is None or not username:
+    # Older databases store the identity under "username"; accept it as the
+    # email so existing accounts keep working.
+    email = document.get("email") or document.get("username")
+    if user_id is None or not email:
         return None
     try:
         role = UserRole.parse(document.get("role"))
@@ -161,7 +160,7 @@ def _user_from_document(document: Any) -> User | None:
         created_at = created_at.replace(tzinfo=UTC)
     return User(
         user_id=int(user_id),
-        username=str(username),
+        email=str(email),
         role=role,
         created_at=created_at,
     )
@@ -197,7 +196,7 @@ class UserStore:
         return bool(self.list_users())
 
     def list_users(self) -> list[User]:
-        """Return all user accounts, sorted by username."""
+        """Return all user accounts, sorted by email address."""
         with _LOCK:
             if not self._path.exists():
                 return []
@@ -211,7 +210,7 @@ class UserStore:
             for document in documents
             if (user := _user_from_document(document)) is not None
         ]
-        return sorted(users, key=lambda user: user.username.casefold())
+        return sorted(users, key=lambda user: user.email.casefold())
 
     def get_user(self, user_id: int) -> User | None:
         """Return a single user account by ID."""
@@ -220,38 +219,55 @@ class UserStore:
                 return user
         return None
 
-    def create_user(self, username: object, password: object, role: object) -> User:
-        """Create a new user account and return it."""
-        validated_username = validate_username(username)
-        validated_password = validate_password(password)
+    def get_user_by_email(self, email: object) -> User | None:
+        """Return the user account for an email address, ignoring case."""
+        candidate = str(email or "").strip().casefold()
+        if not candidate:
+            return None
+        for user in self.list_users():
+            if user.email.casefold() == candidate:
+                return user
+        return None
+
+    def create_user(self, email: object, password: object | None, role: object) -> User:
+        """Create a new user account and return it.
+
+        Passing ``None`` as the password creates an account without local
+        password credentials, for example one managed via OpenID Connect.
+        """
+        validated_email = validate_email(email)
         validated_role = UserRole.parse(role)
+        password_hash = (
+            None
+            if password is None
+            else _encode_password(validate_password(password), self._pbkdf2_iterations)
+        )
         now = datetime.now(UTC)
         with _LOCK:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             db = TinyDB(self._path)
             try:
                 documents = db.table(_USERS_TABLE).all()
-                existing = [str(document.get("username", "")) for document in documents]
+                existing = [
+                    str(document.get("email") or document.get("username", ""))
+                    for document in documents
+                ]
                 if any(
-                    name.casefold() == validated_username.casefold()
-                    for name in existing
+                    name.casefold() == validated_email.casefold() for name in existing
                 ):
-                    raise ValueError("That username is already taken.")
-                doc_id = db.table(_USERS_TABLE).insert(
-                    {
-                        "username": validated_username,
-                        "password_hash": _encode_password(
-                            validated_password, self._pbkdf2_iterations
-                        ),
-                        "role": validated_role.value,
-                        "created_at": now.isoformat(),
-                    }
-                )
+                    raise ValueError("That email address is already in use.")
+                document = {
+                    "email": validated_email,
+                    "password_hash": password_hash,
+                    "role": validated_role.value,
+                    "created_at": now.isoformat(),
+                }
+                doc_id = db.table(_USERS_TABLE).insert(document)
             finally:
                 db.close()
         return User(
             user_id=doc_id,
-            username=validated_username,
+            email=validated_email,
             role=validated_role,
             created_at=now,
         )
@@ -314,9 +330,9 @@ class UserStore:
             finally:
                 db.close()
 
-    def verify_credentials(self, username: object, password: object) -> User | None:
+    def verify_credentials(self, email: object, password: object) -> User | None:
         """Return the user matching the given credentials, if any."""
-        candidate = str(username or "").strip().casefold()
+        candidate = str(email or "").strip().casefold()
         password_value = "" if password is None else str(password)
         with _LOCK:
             if not self._path.exists():
@@ -330,7 +346,8 @@ class UserStore:
         match: User | None = None
         password_hash = None
         for document in documents:
-            if str(document.get("username", "")).casefold() == candidate:
+            identity = document.get("email") or document.get("username", "")
+            if str(identity).casefold() == candidate:
                 user = _user_from_document(document)
                 if user is not None:
                     match = user

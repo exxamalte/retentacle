@@ -5,13 +5,14 @@ from datetime import UTC, datetime, timedelta
 import json
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi.testclient import TestClient
 import pytest
 
 from shelly_backup.configuration import Configuration
 from shelly_backup.discovery import DiscoveredDevice
+from shelly_backup.oidc import OIDCError
 from shelly_backup.server import (
     _effective_ip_addresses,
     _format_datetime_local,
@@ -29,7 +30,7 @@ from shelly_backup.server import (
 from shelly_backup.storage import BackupStore
 from shelly_backup.users import UserRole, UserStore
 
-_ADMIN_USERNAME = "admin"
+_ADMIN_EMAIL = "admin@example.com"
 _ADMIN_PASSWORD = "unit-test-login-pass-1"
 
 
@@ -67,7 +68,7 @@ def _create_app(tmpdir, records=None):
     for record in records or []:
         store.add(record)
     users = UserStore(config.users_path(), pbkdf2_iterations=1)
-    users.create_user(_ADMIN_USERNAME, _ADMIN_PASSWORD, UserRole.ADMIN)
+    users.create_user(_ADMIN_EMAIL, _ADMIN_PASSWORD, UserRole.ADMIN)
     return create_app(config, store=store, users=users), store
 
 
@@ -77,7 +78,7 @@ def _client(app):
     with TestClient(app) as client:
         response = client.post(
             "/login",
-            data={"username": _ADMIN_USERNAME, "password": _ADMIN_PASSWORD},
+            data={"email": _ADMIN_EMAIL, "password": _ADMIN_PASSWORD},
             follow_redirects=False,
         )
         assert response.status_code == 303
@@ -1676,11 +1677,11 @@ class TestServer:
         assert kwargs["port"] == 8080
 
 
-def _login(client, username, password):
+def _login(client, email, password):
     """Sign a test client in and return the redirect response."""
     return client.post(
         "/login",
-        data={"username": username, "password": password},
+        data={"email": email, "password": password},
         follow_redirects=False,
     )
 
@@ -1729,7 +1730,7 @@ class TestAuthentication:
                 response = client.post(
                     "/setup",
                     data={
-                        "username": "admin",
+                        "email": "admin@example.com",
                         "password": "unit-test-login-pass-1",
                         "confirm_password": "unit-test-login-pass-1",
                     },
@@ -1740,7 +1741,7 @@ class TestAuthentication:
                 assert response.headers["location"] == "/"
                 assert "shelly_backup_session=" in response.headers["set-cookie"]
                 created = users.list_users()[0]
-                assert created.username == "admin"
+                assert created.email == "admin@example.com"
                 assert created.role is UserRole.ADMIN
                 assert client.get("/").status_code == 200
                 assert "Sign out" in client.get("/").text
@@ -1753,7 +1754,7 @@ class TestAuthentication:
                 response = client.post(
                     "/setup",
                     data={
-                        "username": "admin",
+                        "email": "admin@example.com",
                         "password": "unit-test-login-pass-1",
                         "confirm_password": "different-pass",
                     },
@@ -1764,14 +1765,14 @@ class TestAuthentication:
                 assert users.has_users() is False
 
     def test_setup_rejects_invalid_account_data(self):
-        """Test that setup validates username and password."""
+        """Test that setup validates email and password."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, users = _create_setup_app(tmpdir)
             with TestClient(app) as client:
                 response = client.post(
                     "/setup",
                     data={
-                        "username": "admin",
+                        "email": "admin@example.com",
                         "password": "short",
                         "confirm_password": "short",
                     },
@@ -1799,7 +1800,7 @@ class TestAuthentication:
                 response = client.post(
                     "/setup",
                     data={
-                        "username": "second",
+                        "email": "second@example.com",
                         "password": "another-password-1",
                         "confirm_password": "another-password-1",
                     },
@@ -1827,12 +1828,12 @@ class TestAuthentication:
             with TestClient(app) as client:
                 response = client.post(
                     "/login",
-                    data={"username": _ADMIN_USERNAME, "password": "wrong-password"},
+                    data={"email": _ADMIN_EMAIL, "password": "wrong-password"},
                 )
 
                 assert response.status_code == 401
-                assert "Invalid username or password" in response.text
-                response = _login(client, _ADMIN_USERNAME, _ADMIN_PASSWORD)
+                assert "Invalid email or password" in response.text
+                response = _login(client, _ADMIN_EMAIL, _ADMIN_PASSWORD)
                 assert response.status_code == 303
 
     def test_login_page_redirects_signed_in_users(self):
@@ -1873,10 +1874,15 @@ class TestAuthentication:
         """Test the permissions of a read-only account."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir, records=[_record()])
-            app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
             doc_id = store.all()[0]["doc_id"]
             client = TestClient(app)
-            assert _login(client, "guest", "viewer-password-1").status_code == 303
+            assert (
+                _login(client, "guest@example.com", "viewer-password-1").status_code
+                == 303
+            )
 
             assert client.get("/").status_code == 200
             assert client.get("/devices/192.168.1.10").status_code == 200
@@ -1900,9 +1906,11 @@ class TestAuthentication:
         """Test that read-only users do not see settings or backup buttons."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir, records=[_record()])
-            app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
             client = TestClient(app)
-            _login(client, "guest", "viewer-password-1")
+            _login(client, "guest@example.com", "viewer-password-1")
 
             text = client.get("/").text
 
@@ -1934,16 +1942,20 @@ class TestUserManagement:
     def _viewer_client(self, tmpdir):
         """Create an app and a client signed in with a read-only account."""
         app, _ = _create_app(tmpdir)
-        app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+        app.state.users.create_user(
+            "guest@example.com", "viewer-password-1", UserRole.VIEWER
+        )
         client = TestClient(app)
-        _login(client, "guest", "viewer-password-1")
+        _login(client, "guest@example.com", "viewer-password-1")
         return app, client
 
     def test_users_page_lists_accounts(self):
         """Test that the settings page shows all accounts and roles."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
             with _client(app) as client:
                 response = client.get("/users")
 
@@ -1964,7 +1976,7 @@ class TestUserManagement:
                 response = client.post(
                     "/settings/users",
                     data={
-                        "username": "operator",
+                        "email": "operator@example.com",
                         "password": "operator-password-1",
                         "role": "admin",
                     },
@@ -1973,26 +1985,28 @@ class TestUserManagement:
 
                 assert response.status_code == 303
                 assert response.headers["location"] == "/settings?saved=1#users"
-                created = users.verify_credentials("operator", "operator-password-1")
+                created = users.verify_credentials(
+                    "operator@example.com", "operator-password-1"
+                )
                 assert created is not None
                 assert created.role is UserRole.ADMIN
 
     def test_create_user_rejects_duplicates(self):
-        """Test that duplicate usernames are reported on the users page."""
+        """Test that duplicate emails are reported on the settings page."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             with _client(app) as client:
                 response = client.post(
                     "/settings/users",
                     data={
-                        "username": "Admin",
+                        "email": "Admin@Example.Com",
                         "password": "another-password-1",
                         "role": "viewer",
                     },
                 )
 
                 assert response.status_code == 400
-                assert "already taken" in response.text
+                assert "already in use" in response.text
 
     def test_create_user_rejects_invalid_data(self):
         """Test that invalid new accounts are rejected."""
@@ -2002,7 +2016,11 @@ class TestUserManagement:
             with _client(app) as client:
                 response = client.post(
                     "/settings/users",
-                    data={"username": "guest", "password": "short", "role": "viewer"},
+                    data={
+                        "email": "guest@example.com",
+                        "password": "short",
+                        "role": "viewer",
+                    },
                 )
 
                 assert response.status_code == 400
@@ -2010,7 +2028,7 @@ class TestUserManagement:
                 response = client.post(
                     "/settings/users",
                     data={
-                        "username": "guest",
+                        "email": "guest@example.com",
                         "password": "all-letters-and-symbols",
                         "role": "viewer",
                     },
@@ -2021,7 +2039,7 @@ class TestUserManagement:
                 response = client.post(
                     "/settings/users",
                     data={
-                        "username": "guest",
+                        "email": "guest@example.com",
                         "password": "lettersanddigits1234",
                         "role": "viewer",
                     },
@@ -2032,7 +2050,7 @@ class TestUserManagement:
                 response = client.post(
                     "/settings/users",
                     data={
-                        "username": "guest",
+                        "email": "guest@example.com",
                         "password": "viewer-password-1",
                         "role": "wizard",
                     },
@@ -2040,14 +2058,18 @@ class TestUserManagement:
 
                 assert response.status_code == 400
                 assert "Invalid role" in response.text
-                assert [user.username for user in users.list_users()] == ["admin"]
+                assert [user.email for user in users.list_users()] == [
+                    "admin@example.com"
+                ]
 
     def test_change_user_role(self):
         """Test that admins can change the role of a user."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             users = app.state.users
-            guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            guest = users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
             with _client(app) as client:
                 response = client.post(
                     f"/settings/users/{guest.user_id}/role",
@@ -2079,7 +2101,9 @@ class TestUserManagement:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             users = app.state.users
-            guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            guest = users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
             token = users.create_session(guest.user_id)
             with _client(app) as client:
                 response = client.post(
@@ -2089,7 +2113,10 @@ class TestUserManagement:
                 )
 
                 assert response.status_code == 303
-                assert users.verify_credentials("guest", "fresh-password-1") is not None
+                assert (
+                    users.verify_credentials("guest@example.com", "fresh-password-1")
+                    is not None
+                )
                 assert users.resolve_session(token) is None
 
     def test_reset_own_password_keeps_session_alive(self):
@@ -2115,7 +2142,9 @@ class TestUserManagement:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             users = app.state.users
-            guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            guest = users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
             with _client(app) as client:
                 response = client.post(
                     f"/settings/users/{guest.user_id}/password",
@@ -2130,7 +2159,9 @@ class TestUserManagement:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             users = app.state.users
-            guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            guest = users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
             with _client(app) as client:
                 response = client.post(
                     f"/settings/users/{guest.user_id}/delete",
@@ -2171,7 +2202,9 @@ class TestUserManagement:
         """Test that read-only users cannot manage accounts."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, client = self._viewer_client(tmpdir)
-            guest = app.state.users.verify_credentials("guest", "viewer-password-1")
+            guest = app.state.users.verify_credentials(
+                "guest@example.com", "viewer-password-1"
+            )
             assert guest is not None
 
             assert client.get("/users").status_code == 403
@@ -2179,7 +2212,7 @@ class TestUserManagement:
                 client.post(
                     "/settings/users",
                     data={
-                        "username": "x",
+                        "email": "x@example.com",
                         "password": "password-1234",
                         "role": "viewer",
                     },
@@ -2204,3 +2237,626 @@ class TestUserManagement:
                 ).status_code
                 == 403
             )
+
+
+_OIDC_ENDPOINTS = {
+    "authorization_endpoint": "https://id.example.com/auth",
+    "token_endpoint": "https://id.example.com/token",
+    "userinfo_endpoint": "https://id.example.com/userinfo",
+}
+
+_OIDC_SECRET = "test-client-secret"
+
+
+def _seed_oidc(store, **overrides):
+    """Store OIDC settings for tests and return the effective values."""
+    oidc = {
+        "enabled": True,
+        "issuer": "https://id.example.com",
+        "client_id": "shelly-backup",
+        "client_secret": _OIDC_SECRET,
+        "callback_url": "",
+        "scopes": "openid email profile",
+        "provider_name": "",
+        "auto_create_users": False,
+        "disable_password_login": False,
+    }
+    oidc.update(overrides)
+    settings = store.get_settings()
+    settings["oidc"] = dict(oidc)
+    store.save_settings(settings)
+    return oidc
+
+
+def _oidc_login_state(client):
+    """Run the OIDC login start and return the state from the provider URL."""
+    response = client.get("/oidc/login", follow_redirects=False)
+
+    assert response.status_code == 302
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    return response.headers["location"], query["state"][0]
+
+
+class TestOIDCSettings:
+    """Tests for the OIDC configuration on the settings page."""
+
+    def test_settings_page_shows_oidc_section(self):
+        """Test that the settings page offers the single sign-on form."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.get("/settings")
+
+                assert response.status_code == 200
+                assert 'name="oidc_issuer"' in response.text
+                assert "Enable OpenID Connect sign-in" in response.text
+                assert 'id="oidc_auto_create_users"' in response.text
+                assert 'id="oidc_disable_password_login"' in response.text
+
+    def test_save_oidc_settings(self):
+        """Test that valid OIDC settings are persisted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/oidc",
+                    data={
+                        "oidc_enabled": "on",
+                        "oidc_issuer": "https://id.example.com/realms/main/",
+                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_secret": _OIDC_SECRET,
+                        "oidc_auto_create_users": "on",
+                        "oidc_provider_name": "Acme ID",
+                        "oidc_callback_url": "https://backup.example.com/oidc/callback",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/settings?saved=1#oidc"
+                oidc = store.get_settings()["oidc"]
+                assert oidc["enabled"] is True
+                assert oidc["issuer"] == "https://id.example.com/realms/main"
+                assert oidc["auto_create_users"] is True
+                assert oidc["disable_password_login"] is False
+                assert oidc["scopes"] == "openid email profile"
+                assert oidc["provider_name"] == "Acme ID"
+                assert (
+                    oidc["callback_url"] == "https://backup.example.com/oidc/callback"
+                )
+
+    def test_save_oidc_keeps_stored_secret(self):
+        """Test that a blank secret field keeps the stored one."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/oidc",
+                    data={
+                        "oidc_enabled": "on",
+                        "oidc_issuer": "https://id.example.com",
+                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_secret": "",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert store.get_settings()["oidc"]["client_secret"] == _OIDC_SECRET
+
+    def test_save_oidc_rejects_invalid_issuer(self):
+        """Test that the issuer must be an absolute URL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/oidc",
+                    data={
+                        "oidc_enabled": "on",
+                        "oidc_issuer": "not-a-url",
+                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_secret": _OIDC_SECRET,
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "issuer URL" in response.text
+                assert "oidc" not in store.get_settings()
+
+    def test_save_oidc_requires_client_id(self):
+        """Test that a client ID is needed when enabling OIDC."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/oidc",
+                    data={
+                        "oidc_enabled": "on",
+                        "oidc_issuer": "https://id.example.com",
+                        "oidc_client_id": "",
+                        "oidc_client_secret": _OIDC_SECRET,
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "client ID" in response.text
+
+    def test_save_oidc_rejects_invalid_callback_url(self):
+        """Test that the optional callback URL must be an absolute URL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/oidc",
+                    data={
+                        "oidc_enabled": "on",
+                        "oidc_issuer": "https://id.example.com",
+                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_secret": _OIDC_SECRET,
+                        "oidc_callback_url": "id.example.com/oidc/callback",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "callback URL" in response.text
+
+    def test_disable_password_requires_secret(self):
+        """Test that disabling password sign-in needs a client secret."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/oidc",
+                    data={
+                        "oidc_enabled": "on",
+                        "oidc_issuer": "https://id.example.com",
+                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_secret": "",
+                        "oidc_disable_password_login": "on",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "client secret" in response.text
+                assert "oidc" not in store.get_settings()
+
+    def test_disable_password_verifies_provider(self):
+        """Test that an unreachable provider blocks disabling passwords."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.server.discover_endpoints",
+                    side_effect=OIDCError("could not connect"),
+                ),
+                _client(app) as client,
+            ):
+                response = client.post(
+                    "/settings/oidc",
+                    data={
+                        "oidc_enabled": "on",
+                        "oidc_issuer": "https://id.example.com",
+                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_secret": "",
+                        "oidc_disable_password_login": "on",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "could not be verified" in response.text
+                assert store.get_settings()["oidc"]["disable_password_login"] is False
+
+    def test_disable_password_saves_when_provider_reachable(self):
+        """Test that a working provider allows disabling password sign-in."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.server.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                _client(app) as client,
+            ):
+                response = client.post(
+                    "/settings/oidc",
+                    data={
+                        "oidc_enabled": "on",
+                        "oidc_issuer": "https://id.example.com",
+                        "oidc_client_id": "shelly-backup",
+                        "oidc_disable_password_login": "on",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert store.get_settings()["oidc"]["disable_password_login"] is True
+
+    def test_disable_password_ignored_when_oidc_off(self):
+        """Test that the password flag cannot be set while OIDC is off."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/oidc",
+                    data={"oidc_disable_password_login": "on"},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                oidc = store.get_settings()["oidc"]
+                assert oidc["enabled"] is False
+                assert oidc["disable_password_login"] is False
+
+
+class TestOIDCLogin:
+    """Tests for the OpenID Connect login flow."""
+
+    def test_login_page_offers_oidc_button(self):
+        """Test that the login page shows both sign-in methods."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with TestClient(app) as client:
+                response = client.get("/login")
+
+                assert response.status_code == 200
+                assert "Sign in with your account provider" in response.text
+                assert 'action="/login"' in response.text
+
+    def test_login_page_hides_password_form_when_disabled(self):
+        """Test that the local form disappears with password login off."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, disable_password_login=True)
+            with TestClient(app) as client:
+                response = client.get("/login")
+
+                assert response.status_code == 200
+                assert "Sign in with your account provider" in response.text
+                assert 'action="/login"' not in response.text
+
+    def test_local_login_rejected_when_password_disabled(self):
+        """Test that the password route refuses requests when disabled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, disable_password_login=True)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/login",
+                    data={"email": _ADMIN_EMAIL, "password": _ADMIN_PASSWORD},
+                )
+
+                assert response.status_code == 403
+                assert "disabled" in response.text
+
+    def test_oidc_login_requires_configuration(self):
+        """Test that the OIDC entry point refuses unconfigured setups."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/oidc/login", follow_redirects=False)
+
+                assert response.status_code == 400
+                assert "not configured" in response.text
+
+    def test_setup_mode_blocks_oidc(self):
+        """Test that OIDC waits until the admin account exists."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_setup_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/oidc/login", follow_redirects=False)
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/setup"
+
+    def test_oidc_login_redirects_to_provider(self):
+        """Test that the flow starts with a correct authorization request."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.get("/oidc/login", follow_redirects=False)
+
+                assert response.status_code == 302
+                location = response.headers["location"]
+                assert location.startswith("https://id.example.com/auth?")
+                query = parse_qs(urlsplit(location).query)
+                assert query["response_type"] == ["code"]
+                assert query["client_id"] == ["shelly-backup"]
+                assert query["redirect_uri"] == ["http://testserver/oidc/callback"]
+                assert query["scope"] == ["openid email profile"]
+                assert query["state"]
+                assert query["nonce"]
+
+    def test_oidc_login_honours_callback_url(self):
+        """Test that the configured callback URL becomes the redirect URI."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, callback_url="https://backup.example.com/oidc/callback")
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.get("/oidc/login", follow_redirects=False)
+                query = parse_qs(urlsplit(response.headers["location"]).query)
+
+                assert query["redirect_uri"] == [
+                    "https://backup.example.com/oidc/callback"
+                ]
+
+    def test_oidc_login_reports_discovery_errors(self):
+        """Test that provider problems are shown on the login page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    side_effect=OIDCError("no discovery document"),
+                ),
+                TestClient(app) as client,
+            ):
+                response = client.get("/oidc/login", follow_redirects=False)
+
+                assert response.status_code == 400
+                assert "no discovery document" in response.text
+
+    def test_login_button_shows_provider_name(self):
+        """Test that the configured provider name labels the OIDC button."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, provider_name="Acme ID")
+            with TestClient(app) as client:
+                response = client.get("/login")
+
+                assert "Sign in with Acme ID" in response.text
+                assert "your account provider" not in response.text
+
+    def test_oidc_callback_signs_in_existing_user(self):
+        """Test that a matching email starts a local session."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "shelly_backup.auth.fetch_userinfo",
+                    return_value={
+                        "email": "Admin@Example.com",
+                        "email_verified": True,
+                    },
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                response = client.get(
+                    "/oidc/callback",
+                    params={"code": "auth-code", "state": state},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/"
+                assert "shelly_backup_session=" in response.headers["set-cookie"]
+                assert "Settings" in client.get("/").text
+
+    def test_oidc_callback_rejects_unknown_state(self):
+        """Test that a callback without a valid state is refused."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with TestClient(app) as client:
+                response = client.get(
+                    "/oidc/callback",
+                    params={"code": "auth-code", "state": "made-up"},
+                )
+
+                assert response.status_code == 400
+                assert "invalid or expired" in response.text
+
+    def test_oidc_callback_state_is_single_use(self):
+        """Test that a state cannot be replayed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "shelly_backup.auth.fetch_userinfo",
+                    return_value={"email": _ADMIN_EMAIL, "email_verified": True},
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                first = client.get(
+                    "/oidc/callback",
+                    params={"code": "c", "state": state},
+                    follow_redirects=False,
+                )
+
+                assert first.status_code == 303
+                replay = client.get(
+                    "/oidc/callback", params={"code": "c", "state": state}
+                )
+
+                assert replay.status_code == 400
+                assert "invalid or expired" in replay.text
+
+    def test_oidc_callback_surfaces_provider_error(self):
+        """Test that provider-reported errors are shown."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                response = client.get(
+                    "/oidc/callback",
+                    params={"state": state, "error": "access_denied"},
+                )
+
+                assert response.status_code == 400
+                assert "access_denied" in response.text
+
+    def test_oidc_callback_handles_exchange_failure(self):
+        """Test that token exchange failures are reported."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch(
+                    "shelly_backup.auth.exchange_code",
+                    side_effect=OIDCError("token endpoint returned HTTP 400."),
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                response = client.get(
+                    "/oidc/callback", params={"code": "c", "state": state}
+                )
+
+                assert response.status_code == 401
+                assert "token endpoint" in response.text
+
+    def test_oidc_callback_requires_email(self):
+        """Test that profiles without an email are rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "shelly_backup.auth.fetch_userinfo",
+                    return_value={"sub": "abc"},
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                response = client.get(
+                    "/oidc/callback", params={"code": "c", "state": state}
+                )
+
+                assert response.status_code == 401
+                assert "did not include an email address" in response.text
+
+    def test_oidc_callback_rejects_unverified_email(self):
+        """Test that unverified email claims are refused."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "shelly_backup.auth.fetch_userinfo",
+                    return_value={"email": _ADMIN_EMAIL, "email_verified": False},
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                response = client.get(
+                    "/oidc/callback", params={"code": "c", "state": state}
+                )
+
+                assert response.status_code == 401
+                assert "not verified" in response.text
+
+    def test_oidc_callback_rejects_unknown_user_without_auto_create(self):
+        """Test that unknown emails are refused unless auto-create is on."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "shelly_backup.auth.fetch_userinfo",
+                    return_value={"email": "stranger@example.com"},
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                response = client.get(
+                    "/oidc/callback", params={"code": "c", "state": state}
+                )
+
+                assert response.status_code == 403
+                assert "No local account exists for stranger@example.com" in (
+                    response.text
+                )
+                assert len(app.state.users.list_users()) == 1
+
+    def test_oidc_callback_creates_read_only_user(self):
+        """Test that auto-create provisions new OIDC users as read-only."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, auto_create_users=True)
+            with (
+                patch(
+                    "shelly_backup.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "shelly_backup.auth.fetch_userinfo",
+                    return_value={"email": "newcomer@example.com"},
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                response = client.get(
+                    "/oidc/callback",
+                    params={"code": "c", "state": state},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert "shelly_backup_session=" in response.headers["set-cookie"]
+                user = app.state.users.get_user_by_email("newcomer@example.com")
+                assert user is not None
+                assert user.role is UserRole.VIEWER
+                assert (
+                    app.state.users.verify_credentials(
+                        "newcomer@example.com", "anything"
+                    )
+                    is None
+                )

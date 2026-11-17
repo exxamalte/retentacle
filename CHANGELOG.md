@@ -3,6 +3,9 @@
 ## 2026.5.0
 * Add user management with admin and read-only roles.
 * Onboard the initial admin account through a first-run setup wizard.
+* Identify user accounts by email address instead of usernames.
+* Add OpenID Connect single sign-on with automatic provisioning of read-only accounts.
+* Allow disabling local password sign-in once the OIDC connection is verified.
 * Require passwords with at least 12 characters, one digit and one special character.
 * Use the full page width for the settings panels, including the user list.
 * Require a login for all pages except the health endpoint.
