@@ -64,8 +64,9 @@ class TestConfig:
                     "issuer": " https://id.example.com/ ",
                     "client_id": " shelly-backup ",
                     "client_secret": "secret",
-                    "base_url": "https://backup.example.com/",
+                    "callback_url": "https://backup.example.com/oidc/callback",
                     "scopes": " openid email ",
+                    "provider_name": " Acme ID ",
                     "auto_create_users": True,
                     "disable_password_login": True,
                 }
@@ -74,7 +75,8 @@ class TestConfig:
 
         assert config.issuer == "https://id.example.com"
         assert config.client_id == "shelly-backup"
-        assert config.base_url == "https://backup.example.com"
+        assert config.callback_url == "https://backup.example.com/oidc/callback"
+        assert config.provider_name == "Acme ID"
         assert config.scopes == "openid email"
         assert config.auto_create_users is True
         assert config.disable_password_login is True

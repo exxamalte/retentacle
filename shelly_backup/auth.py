@@ -144,6 +144,7 @@ def _render_login(
             "error": error,
             "email": email,
             "oidc_enabled": config.ready,
+            "oidc_provider_name": config.provider_name or "your account provider",
             "password_login_enabled": password_login_allowed(store.get_settings()),
         },
     )
@@ -237,8 +238,14 @@ def _register_login_routes(app: FastAPI, users: UserStore, store: BackupStore) -
 
 
 def _oidc_redirect_uri(request: Request, config: OIDCConfig) -> str:
-    """Return the callback URI that the provider should redirect back to."""
-    base = config.base_url or str(request.base_url).rstrip("/")
+    """Return the callback URI that the provider should redirect back to.
+
+    Uses the configured callback URL verbatim so it matches the redirect URI
+    registered at the provider; otherwise it derives one from the request.
+    """
+    if config.callback_url:
+        return config.callback_url
+    base = str(request.base_url).rstrip("/")
     return f"{base}/oidc/callback"
 
 

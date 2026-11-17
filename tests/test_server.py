@@ -2255,8 +2255,9 @@ def _seed_oidc(store, **overrides):
         "issuer": "https://id.example.com",
         "client_id": "shelly-backup",
         "client_secret": _OIDC_SECRET,
-        "base_url": "",
+        "callback_url": "",
         "scopes": "openid email profile",
+        "provider_name": "",
         "auto_create_users": False,
         "disable_password_login": False,
     }
@@ -2305,6 +2306,8 @@ class TestOIDCSettings:
                         "oidc_client_id": "shelly-backup",
                         "oidc_client_secret": _OIDC_SECRET,
                         "oidc_auto_create_users": "on",
+                        "oidc_provider_name": "Acme ID",
+                        "oidc_callback_url": "https://backup.example.com/oidc/callback",
                     },
                     follow_redirects=False,
                 )
@@ -2317,6 +2320,10 @@ class TestOIDCSettings:
                 assert oidc["auto_create_users"] is True
                 assert oidc["disable_password_login"] is False
                 assert oidc["scopes"] == "openid email profile"
+                assert oidc["provider_name"] == "Acme ID"
+                assert (
+                    oidc["callback_url"] == "https://backup.example.com/oidc/callback"
+                )
 
     def test_save_oidc_keeps_stored_secret(self):
         """Test that a blank secret field keeps the stored one."""
@@ -2375,8 +2382,8 @@ class TestOIDCSettings:
                 assert response.status_code == 400
                 assert "client ID" in response.text
 
-    def test_save_oidc_rejects_invalid_base_url(self):
-        """Test that the optional public URL must be an absolute URL."""
+    def test_save_oidc_rejects_invalid_callback_url(self):
+        """Test that the optional callback URL must be an absolute URL."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
             with _client(app) as client:
@@ -2387,12 +2394,12 @@ class TestOIDCSettings:
                         "oidc_issuer": "https://id.example.com",
                         "oidc_client_id": "shelly-backup",
                         "oidc_client_secret": _OIDC_SECRET,
-                        "oidc_base_url": "id.example.com",
+                        "oidc_callback_url": "id.example.com/oidc/callback",
                     },
                 )
 
                 assert response.status_code == 400
-                assert "public URL" in response.text
+                assert "callback URL" in response.text
 
     def test_disable_password_requires_secret(self):
         """Test that disabling password sign-in needs a client secret."""
@@ -2570,11 +2577,11 @@ class TestOIDCLogin:
                 assert query["state"]
                 assert query["nonce"]
 
-    def test_oidc_login_honours_base_url(self):
-        """Test that the configured public URL shapes the redirect URI."""
+    def test_oidc_login_honours_callback_url(self):
+        """Test that the configured callback URL becomes the redirect URI."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            _seed_oidc(store, base_url="https://backup.example.com")
+            _seed_oidc(store, callback_url="https://backup.example.com/oidc/callback")
             with (
                 patch(
                     "shelly_backup.auth.discover_endpoints",
@@ -2582,9 +2589,8 @@ class TestOIDCLogin:
                 ),
                 TestClient(app) as client,
             ):
-                _, query = _oidc_login_state(client)
-                redirect = client.get("/oidc/login", follow_redirects=False)
-                query = parse_qs(urlsplit(redirect.headers["location"]).query)
+                response = client.get("/oidc/login", follow_redirects=False)
+                query = parse_qs(urlsplit(response.headers["location"]).query)
 
                 assert query["redirect_uri"] == [
                     "https://backup.example.com/oidc/callback"
@@ -2606,6 +2612,17 @@ class TestOIDCLogin:
 
                 assert response.status_code == 400
                 assert "no discovery document" in response.text
+
+    def test_login_button_shows_provider_name(self):
+        """Test that the configured provider name labels the OIDC button."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, provider_name="Acme ID")
+            with TestClient(app) as client:
+                response = client.get("/login")
+
+                assert "Sign in with Acme ID" in response.text
+                assert "your account provider" not in response.text
 
     def test_oidc_callback_signs_in_existing_user(self):
         """Test that a matching email starts a local session."""

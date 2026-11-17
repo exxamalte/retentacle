@@ -115,9 +115,11 @@ users sign in through an external identity provider:
   of a confidential OIDC client registered for this app. All endpoints are
   discovered automatically from the issuer's well-known OpenID configuration,
   and the authorization code flow is used. Register the redirect URI
-  `https://<your-host>/oidc/callback` (or the URL derived from the optional
-  **Public URL** field, which you should set when running behind a reverse
-  proxy).
+  `https://<your-host>/oidc/callback` at the provider; leave the optional
+  **Callback URL** field empty to derive it from the current request, or set
+  it to the exact registered redirect URI when running behind a reverse proxy.
+* Optionally set a **provider name**: the login button then reads
+  "Sign in with <name>" instead of "Sign in with your account provider".
 * Users are matched to local accounts by their **email claim**. Signing in
   with the same email address as a local account therefore links to it — the
   easiest way to bootstrap an admin: create the local admin account during

@@ -36,8 +36,9 @@ class OIDCConfig:
     issuer: str = ""
     client_id: str = ""
     client_secret: str = ""
-    base_url: str = ""
+    callback_url: str = ""
     scopes: str = DEFAULT_SCOPES
+    provider_name: str = ""
     auto_create_users: bool = False
     disable_password_login: bool = False
 
@@ -62,8 +63,9 @@ def oidc_config_from_settings(settings: dict) -> OIDCConfig:
         issuer=text("issuer").rstrip("/"),
         client_id=text("client_id"),
         client_secret=text("client_secret"),
-        base_url=text("base_url").rstrip("/"),
+        callback_url=text("callback_url"),
         scopes=text("scopes") or DEFAULT_SCOPES,
+        provider_name=text("provider_name"),
         auto_create_users=bool(raw.get("auto_create_users")),
         disable_password_login=bool(raw.get("disable_password_login")),
     )

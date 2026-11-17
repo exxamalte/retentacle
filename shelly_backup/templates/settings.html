@@ -401,93 +401,113 @@
         </label>
         <p class="field-help">
           The provider is discovered automatically from the issuer URL. A
-          <strong>Sign in with your account provider</strong> button appears
-          on the login page once the connection is configured.
+          <strong>Sign in with …</strong> button appears on the login page
+          once the connection is configured.
         </p>
       </div>
 
-      <div class="form-grid">
-        <div class="form-field">
-          <label for="oidc_issuer">Issuer URL</label>
-          <input
-            class="input"
-            id="oidc_issuer"
-            name="oidc_issuer"
-            type="url"
-            value="{{ oidc.issuer }}"
-            placeholder="https://id.example.com/realms/main"
-            autocomplete="off"
-            spellcheck="false"
-          >
-          <p class="field-help">
-            Base URL of the provider. Its well-known OpenID configuration is
-            used to find all endpoints.
-          </p>
-        </div>
-        <div class="form-field">
-          <label for="oidc_client_id">Client ID</label>
-          <input
-            class="input"
-            id="oidc_client_id"
-            name="oidc_client_id"
-            value="{{ oidc.client_id }}"
-            placeholder="shelly-backup"
-            autocomplete="off"
-            spellcheck="false"
-          >
-        </div>
-        <div class="form-field">
-          <label for="oidc_client_secret">Client secret</label>
-          <input
-            class="input"
-            type="password"
-            id="oidc_client_secret"
-            name="oidc_client_secret"
-            value=""
-            autocomplete="new-password"
-            {% if oidc.has_client_secret %}
-              placeholder="Stored — leave blank to keep it"
-            {% else %}
-              placeholder="Required to enable sign-in"
-            {% endif %}
-          >
-          <p class="field-help">
-            Stored unencrypted in the settings database; keep that file
-            protected.
-          </p>
-        </div>
-        <div class="form-field">
-          <label for="oidc_scopes">Scopes</label>
-          <input
-            class="input"
-            id="oidc_scopes"
-            name="oidc_scopes"
-            value="{{ oidc.scopes }}"
-            placeholder="openid email profile"
-            autocomplete="off"
-            spellcheck="false"
-          >
-          <p class="field-help">
-            Must include "openid email" so users can be identified.
-          </p>
-        </div>
-        <div class="form-field">
-          <label for="oidc_base_url">Public URL (optional)</label>
-          <input
-            class="input"
-            id="oidc_base_url"
-            name="oidc_base_url"
-            type="url"
-            value="{{ oidc.base_url }}"
-            placeholder="https://backup.example.com"
-            autocomplete="off"
-            spellcheck="false"
-          >
-          <p class="field-help">
-            Used to build the callback URL when running behind a reverse
-            proxy. Leave empty to derive it from the current request.
-          </p>
-        </div>
+      <div class="form-field">
+        <label for="oidc_provider_name">Provider name (optional)</label>
+        <input
+          class="input"
+          id="oidc_provider_name"
+          name="oidc_provider_name"
+          value="{{ oidc.provider_name }}"
+          placeholder="e.g. Keycloak"
+          maxlength="50"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p class="field-help">
+          Shown on the login button, for example "Sign in with Keycloak".
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_issuer">Issuer URL</label>
+        <input
+          class="input"
+          id="oidc_issuer"
+          name="oidc_issuer"
+          type="url"
+          value="{{ oidc.issuer }}"
+          placeholder="https://id.example.com/realms/main"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p class="field-help">
+          Base URL of the provider. Its well-known OpenID configuration is
+          used to find all endpoints.
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_client_id">Client ID</label>
+        <input
+          class="input"
+          id="oidc_client_id"
+          name="oidc_client_id"
+          value="{{ oidc.client_id }}"
+          placeholder="shelly-backup"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_client_secret">Client secret</label>
+        <input
+          class="input"
+          type="password"
+          id="oidc_client_secret"
+          name="oidc_client_secret"
+          value=""
+          autocomplete="new-password"
+          {% if oidc.has_client_secret %}
+            placeholder="Stored — leave blank to keep it"
+          {% else %}
+            placeholder="Required to enable sign-in"
+          {% endif %}
+        >
+        <p class="field-help">
+          Stored unencrypted in the settings database; keep that file
+          protected.
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_scopes">Scopes</label>
+        <input
+          class="input"
+          id="oidc_scopes"
+          name="oidc_scopes"
+          value="{{ oidc.scopes }}"
+          placeholder="openid email profile"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p class="field-help">
+          Must include "openid email" so users can be identified.
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label for="oidc_callback_url">Callback URL (optional)</label>
+        <input
+          class="input"
+          id="oidc_callback_url"
+          name="oidc_callback_url"
+          type="url"
+          value="{{ oidc.callback_url }}"
+          placeholder="https://backup.example.com/oidc/callback"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p class="field-help">
+          The exact redirect URI registered with your provider. Leave empty
+          to derive it from the current request — useful when running behind
+          a reverse proxy with a different scheme or host.
+        </p>
       </div>
 
       <div class="form-field toggle-field">

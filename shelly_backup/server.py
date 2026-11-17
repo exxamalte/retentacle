@@ -533,8 +533,9 @@ def _oidc_form_context(store: BackupStore) -> dict[str, object]:
         "enabled": config.enabled,
         "issuer": config.issuer,
         "client_id": config.client_id,
-        "base_url": config.base_url,
+        "callback_url": config.callback_url,
         "scopes": config.scopes,
+        "provider_name": config.provider_name,
         "auto_create_users": config.auto_create_users,
         "disable_password_login": config.disable_password_login,
         "has_client_secret": bool(config.client_secret),
@@ -751,8 +752,9 @@ def _oidc_form_settings(
     issuer = _parse_form_field(form, "oidc_issuer").strip().rstrip("/")
     client_id = _parse_form_field(form, "oidc_client_id").strip()
     client_secret = _parse_form_field(form, "oidc_client_secret")
-    base_url = _parse_form_field(form, "oidc_base_url").strip().rstrip("/")
+    callback_url = _parse_form_field(form, "oidc_callback_url").strip()
     scopes = _parse_form_field(form, "oidc_scopes").strip()
+    provider_name = _parse_form_field(form, "oidc_provider_name").strip()[:50]
     stored = oidc_config_from_settings(stored_settings)
     if not client_secret:
         client_secret = stored.client_secret
@@ -761,8 +763,9 @@ def _oidc_form_settings(
         "issuer": issuer,
         "client_id": client_id,
         "client_secret": client_secret,
-        "base_url": base_url,
+        "callback_url": callback_url,
         "scopes": scopes or DEFAULT_SCOPES,
+        "provider_name": provider_name,
         "auto_create_users": "oidc_auto_create_users" in form,
         "disable_password_login": "oidc_disable_password_login" in form and enabled,
     }
@@ -772,9 +775,9 @@ def _oidc_form_settings(
             error = "Enter an OIDC issuer URL starting with http:// or https://."
         elif not client_id:
             error = "Enter the OIDC client ID."
-        elif base_url and not _is_http_url(base_url):
+        elif callback_url and not _is_http_url(callback_url):
             error = (
-                "Enter a public URL starting with http:// or https://,"
+                "Enter the callback URL including http:// or https://,"
                 " or leave it empty."
             )
         elif values["disable_password_login"] and not client_secret:

@@ -16,7 +16,7 @@
     {% if oidc_enabled %}
       <form method="get" action="/oidc/login" class="device-form">
         <div class="form-actions">
-          <button class="button primary" type="submit">Sign in with your account provider</button>
+          <button class="button primary" type="submit">Sign in with {{ oidc_provider_name }}</button>
         </div>
       </form>
       <p class="field-help">
