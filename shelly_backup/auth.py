@@ -51,14 +51,14 @@ async def _form(request: Request) -> dict[str, str]:
     return _parse_body(await request.body())
 
 
-def _start_session(users: UserStore, user: User) -> str:
+def start_session(users: UserStore, user: User) -> str:
     """Create a login session and return its token."""
     token = users.create_session(user.user_id)
     _LOGGER.info("User %s signed in", user.username)
     return token
 
 
-def _with_session_cookie(
+def with_session_cookie(
     response: Response,
     token: str,
     max_age: timedelta,
@@ -75,10 +75,34 @@ def _with_session_cookie(
     return response
 
 
-def _clear_session_cookie(response: Response) -> Response:
+def clear_session_cookie(response: Response) -> Response:
     """Remove the session cookie from the given response."""
     response.delete_cookie(key=SESSION_COOKIE, path="/")
     return response
+
+
+def user_management_context(users: UserStore, actor: User | None) -> dict:
+    """Return the template context for the user management section."""
+    listed = users.list_users() if actor is not None else []
+    admin_count = sum(1 for user in listed if user.role is UserRole.ADMIN)
+    actor_id = actor.user_id if actor is not None else None
+    rows = [
+        {
+            "user": user,
+            "is_current": user.user_id == actor_id,
+            "can_delete": not (
+                user.user_id == actor_id
+                or (user.role is UserRole.ADMIN and admin_count <= 1)
+            ),
+            "can_demote": not (user.role is UserRole.ADMIN and admin_count <= 1),
+        }
+        for user in listed
+    ]
+    return {
+        "user_rows": rows,
+        "user_role_values": [role.value for role in UserRole],
+        "user_form": {"username": "", "role": UserRole.VIEWER.value},
+    }
 
 
 def _register_setup_routes(app: FastAPI, users: UserStore) -> None:
@@ -118,9 +142,9 @@ def _register_setup_routes(app: FastAPI, users: UserStore) -> None:
                 status_code=400,
                 context={"error": error, "username": username},
             )
-        token = _start_session(users, user)
+        token = start_session(users, user)
         response = RedirectResponse(url="/", status_code=303)
-        return _with_session_cookie(response, token, users.session_max_age)
+        return with_session_cookie(response, token, users.session_max_age)
 
 
 def _register_login_routes(app: FastAPI, users: UserStore) -> None:
@@ -153,140 +177,16 @@ def _register_login_routes(app: FastAPI, users: UserStore) -> None:
                     "username": username,
                 },
             )
-        token = _start_session(users, user)
+        token = start_session(users, user)
         response = RedirectResponse(url="/", status_code=303)
-        return _with_session_cookie(response, token, users.session_max_age)
+        return with_session_cookie(response, token, users.session_max_age)
 
     @app.post("/logout")
     async def logout(request: Request):
         """End the current session and return to the login page."""
         users.delete_session(request.cookies.get(SESSION_COOKIE, ""))
         response = RedirectResponse(url="/login", status_code=303)
-        return _clear_session_cookie(response)
-
-
-def _render_users(
-    request: Request,
-    users: UserStore,
-    actor: User,
-    *,
-    status_code: int = 200,
-    error: str | None = None,
-    saved: bool = False,
-    deleted: str | None = None,
-    form_values: dict[str, str] | None = None,
-):
-    """Render the user management page."""
-    listed = users.list_users()
-    admin_count = sum(1 for user in listed if user.role is UserRole.ADMIN)
-    rows = [
-        {
-            "user": user,
-            "is_current": user.user_id == actor.user_id,
-            "can_delete": not (
-                user.user_id == actor.user_id
-                or (user.role is UserRole.ADMIN and admin_count <= 1)
-            ),
-            "can_demote": not (user.role is UserRole.ADMIN and admin_count <= 1),
-        }
-        for user in listed
-    ]
-    return templates.TemplateResponse(
-        request=request,
-        name="users.html",
-        status_code=status_code,
-        context={
-            "rows": rows,
-            "current": actor,
-            "error": error,
-            "saved": saved,
-            "deleted": deleted,
-            "form_values": form_values
-            or {"username": "", "role": UserRole.VIEWER.value},
-            "role_values": [role.value for role in UserRole],
-        },
-    )
-
-
-def _register_users_overview_routes(app: FastAPI, users: UserStore) -> None:
-    """Register the user list and account creation routes for admins."""
-
-    @app.get("/users", response_class=HTMLResponse)
-    async def users_page(request: Request):
-        """Show all user accounts."""
-        actor = require_admin(request)
-        return _render_users(
-            request,
-            users,
-            actor,
-            saved=request.query_params.get("saved") == "1",
-            deleted=request.query_params.get("deleted"),
-        )
-
-    @app.post("/users")
-    async def create_user(request: Request):
-        """Create a new user account."""
-        actor = require_admin(request)
-        form = await _form(request)
-        username = form.get("username", "")
-        password = form.get("password", "")
-        role = form.get("role", UserRole.VIEWER.value)
-        try:
-            users.create_user(username, password, role)
-        except ValueError as exc:
-            return _render_users(
-                request,
-                users,
-                actor,
-                status_code=400,
-                error=str(exc),
-                form_values={"username": username, "role": role},
-            )
-        return RedirectResponse(url="/users?saved=1", status_code=303)
-
-
-def _register_user_detail_routes(app: FastAPI, users: UserStore) -> None:
-    """Register the per-user role, password, and delete routes for admins."""
-
-    @app.post("/users/{user_id}/role")
-    async def change_role(request: Request, user_id: int):
-        """Change the role of a user account."""
-        actor = require_admin(request)
-        form = await _form(request)
-        try:
-            users.change_role(user_id, form.get("role", ""))
-        except ValueError as exc:
-            return _render_users(request, users, actor, status_code=400, error=str(exc))
-        return RedirectResponse(url="/users?saved=1", status_code=303)
-
-    @app.post("/users/{user_id}/password")
-    async def reset_password(request: Request, user_id: int):
-        """Set a new password for a user account."""
-        actor = require_admin(request)
-        form = await _form(request)
-        try:
-            users.change_password(user_id, form.get("password", ""))
-        except ValueError as exc:
-            return _render_users(request, users, actor, status_code=400, error=str(exc))
-        response = RedirectResponse(url="/users?saved=1", status_code=303)
-        if user_id == actor.user_id:
-            # Changing your own password invalidates the current session,
-            # so sign back in with a fresh one.
-            current = users.get_user(user_id)
-            if current is not None:
-                token = _start_session(users, current)
-                _with_session_cookie(response, token, users.session_max_age)
-        return response
-
-    @app.post("/users/{user_id}/delete")
-    async def delete_user(request: Request, user_id: int):
-        """Delete a user account."""
-        actor = require_admin(request)
-        try:
-            users.delete_user(user_id, acting_user_id=actor.user_id)
-        except ValueError as exc:
-            return _render_users(request, users, actor, status_code=400, error=str(exc))
-        return RedirectResponse(url=f"/users?deleted={user_id}", status_code=303)
+        return clear_session_cookie(response)
 
 
 def _redirect_target(path: str, user: User | None, has_users: bool) -> str | None:
@@ -318,9 +218,7 @@ def _register_middleware(app: FastAPI, users: UserStore) -> None:
 
 
 def register_auth(app: FastAPI, users: UserStore) -> None:
-    """Register authentication middleware, auth pages, and user management."""
+    """Register authentication middleware, setup, and login pages."""
     _register_middleware(app, users)
     _register_setup_routes(app, users)
     _register_login_routes(app, users)
-    _register_users_overview_routes(app, users)
-    _register_user_detail_routes(app, users)

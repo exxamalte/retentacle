@@ -706,11 +706,6 @@
               href="/settings"
               {% if request.url.path == '/settings' %}aria-current="page"{% endif %}
             >Settings</a>
-            <a
-              class="button"
-              href="/users"
-              {% if request.url.path.startswith('/users') %}aria-current="page"{% endif %}
-            >Users</a>
             <form method="post" action="/backup?redirect={{ request.url.path }}">
               <button class="button primary" type="submit">Run backup now</button>
             </form>

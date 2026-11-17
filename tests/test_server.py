@@ -1914,7 +1914,7 @@ class TestAuthentication:
             assert "guest" in text
 
     def test_admin_page_shows_navigation_for_admins(self):
-        """Test that admins see settings, users, and backup controls."""
+        """Test that admins see settings and backup controls in the header."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
             with _client(app) as client:
@@ -1922,11 +1922,14 @@ class TestAuthentication:
 
                 assert "Run backup now" in text
                 assert 'href="/settings"' in text
-                assert 'href="/users"' in text
+                redirect = client.get("/users", follow_redirects=False)
+
+                assert redirect.status_code == 303
+                assert redirect.headers["location"] == "/settings"
 
 
 class TestUserManagement:
-    """Tests for the user management page and routes."""
+    """Tests for the user management section on the settings page."""
 
     def _viewer_client(self, tmpdir):
         """Create an app and a client signed in with a read-only account."""
@@ -1937,7 +1940,7 @@ class TestUserManagement:
         return app, client
 
     def test_users_page_lists_accounts(self):
-        """Test that the users page shows all accounts and roles."""
+        """Test that the settings page shows all accounts and roles."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
@@ -1950,6 +1953,7 @@ class TestUserManagement:
                 assert "Administrator" in response.text
                 assert "Read-only" in response.text
                 assert ">You</span>" in response.text
+                assert "Add user" in response.text
 
     def test_create_user(self):
         """Test that admins can create accounts with both roles."""
@@ -1958,7 +1962,7 @@ class TestUserManagement:
             users = app.state.users
             with _client(app) as client:
                 response = client.post(
-                    "/users",
+                    "/settings/users",
                     data={
                         "username": "operator",
                         "password": "operator-password-1",
@@ -1968,7 +1972,7 @@ class TestUserManagement:
                 )
 
                 assert response.status_code == 303
-                assert response.headers["location"] == "/users?saved=1"
+                assert response.headers["location"] == "/settings?saved=1#users"
                 created = users.verify_credentials("operator", "operator-password-1")
                 assert created is not None
                 assert created.role is UserRole.ADMIN
@@ -1979,7 +1983,7 @@ class TestUserManagement:
             app, _ = _create_app(tmpdir)
             with _client(app) as client:
                 response = client.post(
-                    "/users",
+                    "/settings/users",
                     data={
                         "username": "Admin",
                         "password": "another-password-1",
@@ -1997,14 +2001,14 @@ class TestUserManagement:
             users = app.state.users
             with _client(app) as client:
                 response = client.post(
-                    "/users",
+                    "/settings/users",
                     data={"username": "guest", "password": "short", "role": "viewer"},
                 )
 
                 assert response.status_code == 400
                 assert "at least 12 characters" in response.text
                 response = client.post(
-                    "/users",
+                    "/settings/users",
                     data={
                         "username": "guest",
                         "password": "all-letters-and-symbols",
@@ -2015,7 +2019,7 @@ class TestUserManagement:
                 assert response.status_code == 400
                 assert "at least one digit" in response.text
                 response = client.post(
-                    "/users",
+                    "/settings/users",
                     data={
                         "username": "guest",
                         "password": "lettersanddigits1234",
@@ -2026,7 +2030,7 @@ class TestUserManagement:
                 assert response.status_code == 400
                 assert "special character" in response.text
                 response = client.post(
-                    "/users",
+                    "/settings/users",
                     data={
                         "username": "guest",
                         "password": "viewer-password-1",
@@ -2046,7 +2050,7 @@ class TestUserManagement:
             guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
             with _client(app) as client:
                 response = client.post(
-                    f"/users/{guest.user_id}/role",
+                    f"/settings/users/{guest.user_id}/role",
                     data={"role": "admin"},
                     follow_redirects=False,
                 )
@@ -2062,7 +2066,7 @@ class TestUserManagement:
             admin = users.list_users()[0]
             with _client(app) as client:
                 response = client.post(
-                    f"/users/{admin.user_id}/role",
+                    f"/settings/users/{admin.user_id}/role",
                     data={"role": "viewer"},
                 )
 
@@ -2079,7 +2083,7 @@ class TestUserManagement:
             token = users.create_session(guest.user_id)
             with _client(app) as client:
                 response = client.post(
-                    f"/users/{guest.user_id}/password",
+                    f"/settings/users/{guest.user_id}/password",
                     data={"password": "fresh-password-1"},
                     follow_redirects=False,
                 )
@@ -2097,7 +2101,7 @@ class TestUserManagement:
             with _client(app) as client:
                 old_token = client.cookies.get("shelly_backup_session")
                 response = client.post(
-                    f"/users/{admin.user_id}/password",
+                    f"/settings/users/{admin.user_id}/password",
                     data={"password": "unit-test-login-pass-1"},
                     follow_redirects=False,
                 )
@@ -2114,7 +2118,7 @@ class TestUserManagement:
             guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
             with _client(app) as client:
                 response = client.post(
-                    f"/users/{guest.user_id}/password",
+                    f"/settings/users/{guest.user_id}/password",
                     data={"password": "short"},
                 )
 
@@ -2129,13 +2133,13 @@ class TestUserManagement:
             guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
             with _client(app) as client:
                 response = client.post(
-                    f"/users/{guest.user_id}/delete",
+                    f"/settings/users/{guest.user_id}/delete",
                     data={},
                     follow_redirects=False,
                 )
 
                 assert response.status_code == 303
-                assert response.headers["location"] == f"/users?deleted={guest.user_id}"
+                assert response.headers["location"] == "/settings?saved=1#users"
                 assert users.get_user(guest.user_id) is None
 
     def test_delete_rejects_own_and_last_admin_account(self):
@@ -2145,7 +2149,9 @@ class TestUserManagement:
             users = app.state.users
             admin = users.list_users()[0]
             with _client(app) as client:
-                response = client.post(f"/users/{admin.user_id}/delete", data={})
+                response = client.post(
+                    f"/settings/users/{admin.user_id}/delete", data={}
+                )
 
                 assert response.status_code == 400
                 assert "own account" in response.text
@@ -2156,7 +2162,7 @@ class TestUserManagement:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             with _client(app) as client:
-                response = client.post("/users/999/delete", data={})
+                response = client.post("/settings/users/999/delete", data={})
 
                 assert response.status_code == 400
                 assert "not found" in response.text
@@ -2171,7 +2177,7 @@ class TestUserManagement:
             assert client.get("/users").status_code == 403
             assert (
                 client.post(
-                    "/users",
+                    "/settings/users",
                     data={
                         "username": "x",
                         "password": "password-1234",
@@ -2181,13 +2187,20 @@ class TestUserManagement:
                 == 403
             )
             assert (
-                client.post(f"/users/{guest.user_id}/role", data={}).status_code == 403
-            )
-            assert (
-                client.post(f"/users/{guest.user_id}/delete", data={}).status_code
+                client.post(
+                    f"/settings/users/{guest.user_id}/role", data={}
+                ).status_code
                 == 403
             )
             assert (
-                client.post(f"/users/{guest.user_id}/password", data={}).status_code
+                client.post(
+                    f"/settings/users/{guest.user_id}/delete", data={}
+                ).status_code
+                == 403
+            )
+            assert (
+                client.post(
+                    f"/settings/users/{guest.user_id}/password", data={}
+                ).status_code
                 == 403
             )

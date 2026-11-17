@@ -20,7 +20,14 @@ from fastapi.responses import (
 )
 import uvicorn
 
-from .auth import register_auth, require_admin
+from .auth import (
+    current_user,
+    register_auth,
+    require_admin,
+    start_session,
+    user_management_context,
+    with_session_cookie,
+)
 from .backup import Backup
 from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME
@@ -33,7 +40,7 @@ from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
 from .templating import templates
-from .users import UserStore
+from .users import UserRole, UserStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -516,9 +523,8 @@ def _settings_context(
     configuration: Configuration,
     store: BackupStore,
     scheduler: BackupScheduler,
-    **overrides: object,
 ) -> dict[str, object]:
-    """Build the template context for the settings page."""
+    """Build the base template context for the settings page."""
     interval = scheduler.interval
     next_run = scheduler.next_run
     next_run_value = next_run
@@ -546,7 +552,6 @@ def _settings_context(
         "discovery_error": None,
         "saved": False,
     }
-    context.update(overrides)
     return context
 
 
@@ -559,12 +564,17 @@ def _render_settings(
     status_code: int = 200,
     **overrides: object,
 ):
-    """Render the settings page with the current settings."""
+    """Render the settings page with the current settings and user accounts."""
+    context = _settings_context(configuration, store, scheduler)
+    context.update(
+        user_management_context(request.app.state.users, current_user(request))
+    )
+    context.update(overrides)
     return templates.TemplateResponse(
         request=request,
         name="settings.html",
         status_code=status_code,
-        context=_settings_context(configuration, store, scheduler, **overrides),
+        context=context,
     )
 
 
@@ -694,6 +704,128 @@ def _register_retention_settings_routes(
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
 
+_SETTINGS_USERS_REDIRECT = "/settings?saved=1#users"
+
+
+def _parse_form_field(form: dict[str, list[str]], name: str) -> str:
+    """Return the last submitted value for a form field, or an empty string."""
+    values = form.get(name, [])
+    return values[-1] if values else ""
+
+
+def _register_user_settings_routes(
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+) -> None:
+    """Register the user management routes on the settings page."""
+
+    @app.get("/users")
+    async def users_redirect():
+        """Redirect the legacy users page to the settings page."""
+        return RedirectResponse(url="/settings", status_code=303)
+
+    @app.post("/settings/users")
+    async def add_user(request: Request):
+        """Create a new user account."""
+        require_admin(request)
+        users = request.app.state.users
+        body = (await request.body()).decode("utf-8", errors="replace")
+        form = parse_qs(body)
+        username = _parse_form_field(form, "username")
+        password = _parse_form_field(form, "password")
+        role = _parse_form_field(form, "role") or UserRole.VIEWER.value
+        try:
+            users.create_user(username, password, role)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=str(exc),
+                user_form={"username": username, "role": role},
+            )
+        return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
+
+
+def _register_user_detail_settings_routes(
+    app: FastAPI,
+    configuration: Configuration,
+    store: BackupStore,
+    scheduler: BackupScheduler,
+) -> None:
+    """Register the per-user role, password, and delete routes."""
+
+    @app.post("/settings/users/{user_id}/role")
+    async def change_user_role(request: Request, user_id: int):
+        """Change the role of a user account."""
+        require_admin(request)
+        users = request.app.state.users
+        body = (await request.body()).decode("utf-8", errors="replace")
+        role = _parse_form_field(parse_qs(body), "role")
+        try:
+            users.change_role(user_id, role)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=str(exc),
+            )
+        return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
+
+    @app.post("/settings/users/{user_id}/password")
+    async def reset_user_password(request: Request, user_id: int):
+        """Set a new password for a user account."""
+        actor = require_admin(request)
+        users = request.app.state.users
+        body = (await request.body()).decode("utf-8", errors="replace")
+        password = _parse_form_field(parse_qs(body), "password")
+        try:
+            users.change_password(user_id, password)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=str(exc),
+            )
+        response = RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
+        if user_id == actor.user_id:
+            # Changing your own password invalidates the current session,
+            # so sign back in with a fresh one.
+            current = users.get_user(user_id)
+            if current is not None:
+                token = start_session(users, current)
+                with_session_cookie(response, token, users.session_max_age)
+        return response
+
+    @app.post("/settings/users/{user_id}/delete")
+    async def delete_user(request: Request, user_id: int):
+        """Delete a user account."""
+        actor = require_admin(request)
+        users = request.app.state.users
+        try:
+            users.delete_user(user_id, acting_user_id=actor.user_id)
+        except ValueError as exc:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=str(exc),
+            )
+        return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
+
+
 def _register_settings_routes(
     app: FastAPI,
     configuration: Configuration,
@@ -776,6 +908,8 @@ def _register_settings_routes(
 
     _register_retention_settings_routes(app, configuration, store, scheduler)
     _register_device_settings_routes(app, configuration, store, scheduler)
+    _register_user_settings_routes(app, configuration, store, scheduler)
+    _register_user_detail_settings_routes(app, configuration, store, scheduler)
 
 
 def _register_routes(

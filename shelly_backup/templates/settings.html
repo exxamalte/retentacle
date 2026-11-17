@@ -5,7 +5,7 @@
     <div>
       <h1>Settings</h1>
       <p class="subtitle">
-        Configure the backup schedule, retention, and devices.
+        Configure the backup schedule, retention, devices, and users.
       </p>
     </div>
   </div>
@@ -379,6 +379,8 @@
       </div>
     </form>
   </section>
+
+  {% include "settings_users.html" %}
 
   <p class="footer-note">
     Settings are stored in the backup database and override the configuration

@@ -87,13 +87,14 @@ The web server ships with simple built-in user management:
   setup wizard where you create the initial **admin** account. You are then
   signed in automatically.
 * **Administrators** can do everything: browse and download backups, run
-  backups, change settings, and manage user accounts on the **Users** page.
+  backups, change settings, and manage user accounts in the Users section of
+  the Settings page.
 * **Read-only** users can look around: they can browse devices, view the backup
   history, and download backups, but they cannot change any settings or take
   new backups. The admin-only buttons and pages are hidden from them, and the
   server rejects their requests to those routes.
 * Additional accounts — with either role — are created by admins on the
-  **Users** page. Passwords must be at least 12 characters long and include at
+  **Settings** page. Passwords must be at least 12 characters long and include at
   least one digit and one special character. They are stored as salted PBKDF2
   hashes, never in plain text. The last admin account can neither be deleted
   nor demoted, and admins cannot delete their own account.
@@ -108,12 +109,12 @@ sessions.
 * `/devices/<ip-address>` - all backups for one device, newest first, plus a link to the device web UI.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
-* `/settings` - configure the backup schedule and device IP addresses (admin only).
-* `/users` - manage user accounts and roles (admin only).
+* `/settings` - configure the backup schedule and device IP addresses, and manage user accounts, roles, and passwords (admin only).
 * `/setup` - first-run wizard to create the initial admin account.
 * `/login`, `/logout` - sign in and out.
 * `/api/status` - scheduler status and live backup progress as JSON.
 * `/health` - server and scheduler status as JSON (the only page that does not require a login).
+* `/users` - legacy alias that redirects to `/settings`.
 
 A **Run backup now** button is available on every page. It backs up the devices
 configured on the Settings page. If no devices are configured there, it backs up
