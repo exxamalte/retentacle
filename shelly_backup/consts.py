@@ -10,3 +10,4 @@ DEFAULT_INTERVAL: Final = 3600
 DEFAULT_HOST: Final = "127.0.0.1"
 DEFAULT_PORT: Final = 8080
 DATABASE_FILENAME: Final = "shelly_backup.json"
+USERS_FILENAME: Final = "shelly_backup_users.json"

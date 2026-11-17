@@ -36,9 +36,11 @@
           title="Open the device web UI in a new tab"
         >Open web UI</a>
       {% endif %}
-      <form method="post" action="/devices/{{ ip_address }}/backup">
-        <button class="button primary" type="submit">Back up this device</button>
-      </form>
+      {% if request.state.user.role == 'admin' %}
+        <form method="post" action="/devices/{{ ip_address }}/backup">
+          <button class="button primary" type="submit">Back up this device</button>
+        </form>
+      {% endif %}
     </div>
   </div>
 

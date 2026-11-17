@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Welcome - {{ application_name }}{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Welcome</h1>
+      <p class="subtitle">
+        It looks like this is the first time you are starting
+        {{ application_name }}. Create an admin account to get started.
+      </p>
+    </div>
+  </div>
+
+  <section class="card settings-card" aria-label="Create admin account">
+    <h2>Create admin account</h2>
+
+    {% if error %}
+      <div class="alert" role="alert">
+        <strong>Unable to create the account:</strong> {{ error }}
+      </div>
+    {% endif %}
+
+    <form method="post" action="/setup" class="device-form">
+      <div class="form-field">
+        <label for="username">Username</label>
+        <input
+          class="input"
+          id="username"
+          name="username"
+          value="{{ username }}"
+          autocomplete="username"
+          autofocus
+          required
+        >
+      </div>
+      <div class="form-field">
+        <label for="password">Password</label>
+        <input
+          class="input"
+          type="password"
+          id="password"
+          name="password"
+          autocomplete="new-password"
+          minlength="12"
+          pattern="(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,}"
+          title="At least 12 characters, including one digit and one special character"
+          required
+        >
+        <p class="field-help">
+          Use at least 12 characters, including one digit and one special
+          character.
+        </p>
+      </div>
+      <div class="form-field">
+        <label for="confirm_password">Confirm password</label>
+        <input
+          class="input"
+          type="password"
+          id="confirm_password"
+          name="confirm_password"
+          autocomplete="new-password"
+          minlength="12"
+          pattern="(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,}"
+          title="At least 12 characters, including one digit and one special character"
+          required
+        >
+      </div>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Create admin account</button>
+      </div>
+    </form>
+
+    <p class="field-help" style="margin-top: 1rem;">
+      The admin account can manage devices, settings, backups and users. You can
+      add read-only accounts later on the Users page.
+    </p>
+  </section>
+{% endblock %}

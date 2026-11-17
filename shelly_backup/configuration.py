@@ -5,7 +5,13 @@ import re
 
 import yaml
 
-from .consts import DATABASE_FILENAME, DEFAULT_HOST, DEFAULT_INTERVAL, DEFAULT_PORT
+from .consts import (
+    DATABASE_FILENAME,
+    DEFAULT_HOST,
+    DEFAULT_INTERVAL,
+    DEFAULT_PORT,
+    USERS_FILENAME,
+)
 
 _INTERVAL_PATTERN = re.compile(r"^(\d+(?:\.\d+)?)\s*([smhd]?)$")
 _INTERVAL_FACTORS = {
@@ -86,6 +92,10 @@ class Configuration:
     def database_path(self) -> Path:
         """Get the path to the backup database."""
         return self.target_folder() / DATABASE_FILENAME
+
+    def users_path(self) -> Path:
+        """Get the path to the user account database."""
+        return self.target_folder() / USERS_FILENAME
 
     def discover(self) -> bool:
         """Whether to discover devices via mDNS."""

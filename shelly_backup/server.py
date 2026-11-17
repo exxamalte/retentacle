@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 import ipaddress
 import json
 import logging
-from pathlib import Path
 import re
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -19,9 +18,9 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
-from fastapi.templating import Jinja2Templates
 import uvicorn
 
+from .auth import register_auth, require_admin
 from .backup import Backup
 from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME
@@ -33,10 +32,11 @@ from .discovery import (
 from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
+from .templating import templates
+from .users import UserStore
 
 _LOGGER = logging.getLogger(__name__)
 
-_TEMPLATES_DIR = Path(__file__).parent / "templates"
 _DISCOVERY_TIMEOUT = 5.0
 _INTERVAL_PRESETS = (
     ("1h", "Every hour"),
@@ -49,8 +49,6 @@ _INTERVAL_PRESETS = (
 )
 _INTERVAL_PRESET_VALUES = {value for value, _ in _INTERVAL_PRESETS}
 _RETENTION_MAX = 1000
-templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-templates.env.globals["application_name"] = APPLICATION_NAME
 
 
 def _format_timestamp(value: datetime | str | None) -> str:
@@ -470,8 +468,9 @@ def _register_device_backup_route(
     """Register the manual per-device backup route."""
 
     @app.post("/devices/{ip_address}/backup")
-    async def backup_device(ip_address: str, redirect: str = ""):
+    async def backup_device(request: Request, ip_address: str, redirect: str = ""):
         """Back up a single device and return to the requesting page."""
+        require_admin(request)
         records = store.by_device(ip_address)
         if not records:
             raise HTTPException(status_code=404, detail="Device not found")
@@ -490,8 +489,11 @@ def _register_backup_routes(
     """Register the global backup and status routes."""
 
     @app.post("/backup")
-    async def trigger_backup(background_tasks: BackgroundTasks, redirect: str = "/"):
+    async def trigger_backup(
+        request: Request, background_tasks: BackgroundTasks, redirect: str = "/"
+    ):
         """Back up all registered devices in the background."""
+        require_admin(request)
         scheduler.queue()
         background_tasks.add_task(
             scheduler.run_once, _manual_backup_ip_addresses(store)
@@ -577,6 +579,7 @@ def _register_device_settings_routes(
     @app.post("/settings/discover")
     async def discover_devices(request: Request):
         """Discover Shelly devices and offer the ones not added yet."""
+        require_admin(request)
         try:
             discovered = await asyncio.to_thread(
                 discover_shelly_device_details, timeout=_DISCOVERY_TIMEOUT
@@ -605,8 +608,9 @@ def _register_device_settings_routes(
         )
 
     @app.post("/settings/discover/stream")
-    async def discover_devices_stream():
+    async def discover_devices_stream(request: Request):
         """Stream newly discovered devices as newline-delimited JSON."""
+        require_admin(request)
         return StreamingResponse(
             _discover_stream(_saved_ip_addresses(store)),
             media_type="application/x-ndjson",
@@ -619,6 +623,7 @@ def _register_device_settings_routes(
     @app.post("/settings/devices")
     async def add_devices(request: Request):
         """Add one or more device IP addresses to the settings."""
+        require_admin(request)
         body = (await request.body()).decode("utf-8", errors="replace")
         raw_values = parse_qs(body).get("ip_addresses", [])
         error = _save_device_ip_addresses(store, raw_values)
@@ -637,6 +642,7 @@ def _register_device_settings_routes(
     @app.post("/settings/devices/remove")
     async def remove_device(request: Request):
         """Remove a device IP address from the settings."""
+        require_admin(request)
         body = (await request.body()).decode("utf-8", errors="replace")
         raw_ip_address = parse_qs(body).get("ip_address", [""])[0]
         try:
@@ -663,6 +669,7 @@ def _register_retention_settings_routes(
     @app.post("/settings/retention")
     async def save_retention(request: Request):
         """Validate and persist the backup retention policy."""
+        require_admin(request)
         body = (await request.body()).decode("utf-8", errors="replace")
         form = parse_qs(body)
         values = {
@@ -698,6 +705,7 @@ def _register_settings_routes(
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         """Show the application settings form."""
+        require_admin(request)
         return _render_settings(
             request,
             configuration,
@@ -709,6 +717,7 @@ def _register_settings_routes(
     @app.post("/settings")
     async def save_settings(request: Request):
         """Validate and persist the automatic backup schedule."""
+        require_admin(request)
         body = (await request.body()).decode("utf-8", errors="replace")
         form = parse_qs(body)
         automatic_backups = "automatic_backups" in form
@@ -849,10 +858,12 @@ def create_app(
     configuration: Configuration | None = None,
     store: BackupStore | None = None,
     scheduler: BackupScheduler | None = None,
+    users: UserStore | None = None,
 ) -> FastAPI:
     """Create the Shelly Backup web application."""
     configuration = configuration or Configuration()
     store = store or BackupStore(configuration.database_path())
+    users = users or UserStore(configuration.users_path())
     if scheduler is None:
         enabled, interval, next_run_at = _effective_schedule(configuration, store)
         scheduler = BackupScheduler(
@@ -876,6 +887,8 @@ def create_app(
     app.state.configuration = configuration
     app.state.store = store
     app.state.scheduler = scheduler
+    app.state.users = users
+    register_auth(app, users)
     _register_routes(app, configuration, store, scheduler)
     return app
 

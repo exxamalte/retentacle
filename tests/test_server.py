@@ -1,5 +1,6 @@
 """Tests for the web server module."""
 
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 import json
 import tempfile
@@ -26,6 +27,10 @@ from shelly_backup.server import (
     run_server,
 )
 from shelly_backup.storage import BackupStore
+from shelly_backup.users import UserRole, UserStore
+
+_ADMIN_USERNAME = "admin"
+_ADMIN_PASSWORD = "unit-test-login-pass-1"
 
 
 def _record(
@@ -47,13 +52,36 @@ def _record(
     }
 
 
+def _create_setup_app(tmpdir):
+    """Create a test app without any user accounts, as on first startup."""
+    config = Configuration(None, tmpdir, None, interval=0)
+    store = BackupStore(config.database_path())
+    users = UserStore(config.users_path(), pbkdf2_iterations=1)
+    return create_app(config, store=store, users=users), users
+
+
 def _create_app(tmpdir, records=None):
     """Create a test app with an optional set of seeded records."""
     config = Configuration(None, tmpdir, None, interval=0)
     store = BackupStore(config.database_path())
     for record in records or []:
         store.add(record)
-    return create_app(config, store=store), store
+    users = UserStore(config.users_path(), pbkdf2_iterations=1)
+    users.create_user(_ADMIN_USERNAME, _ADMIN_PASSWORD, UserRole.ADMIN)
+    return create_app(config, store=store, users=users), store
+
+
+@contextmanager
+def _client(app):
+    """Yield a test client that is signed in as the seeded admin user."""
+    with TestClient(app) as client:
+        response = client.post(
+            "/login",
+            data={"username": _ADMIN_USERNAME, "password": _ADMIN_PASSWORD},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        yield client
 
 
 class TestFormatInterval:
@@ -172,7 +200,7 @@ class TestServer:
         """Test the overview page without any backups."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -193,7 +221,7 @@ class TestServer:
                     ),
                 ],
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -225,7 +253,7 @@ class TestServer:
                 ],
             )
             store.save_settings({"ip_addresses": ["192.168.1.10"]})
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -243,7 +271,7 @@ class TestServer:
         """Test the overview opens each device web UI in a new tab."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -259,7 +287,7 @@ class TestServer:
                 tmpdir,
                 records=[_record(ip_address="2001:db8::1")],
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -269,7 +297,7 @@ class TestServer:
         """Test the overview page shows scheduler status and the notice."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/?backup_started=1")
 
         assert response.status_code == 200
@@ -286,7 +314,7 @@ class TestServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             app.state.scheduler.last_error = "Device unreachable"
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -301,7 +329,7 @@ class TestServer:
                 records=[_record(timestamp="2026-11-15T10:00:00+00:00")],
             )
             app.state.scheduler.last_run = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -316,7 +344,7 @@ class TestServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             app.state.scheduler.last_run = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -331,7 +359,7 @@ class TestServer:
         """Test the page includes the progress bar and status polling."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -345,7 +373,7 @@ class TestServer:
         """Test the status API returns scheduler and progress information."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/api/status")
 
         assert response.status_code == 200
@@ -374,7 +402,7 @@ class TestServer:
             scheduler.progress_results = [
                 {"ip_address": "192.168.1.10", "success": True}
             ]
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/api/status")
 
         data = response.json()
@@ -396,7 +424,7 @@ class TestServer:
                     _record(timestamp="2026-11-15T12:00:00+00:00"),
                 ],
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/devices/192.168.1.10")
                 assert len(store.by_device("192.168.1.10")) == 2
 
@@ -414,7 +442,7 @@ class TestServer:
                 tmpdir,
                 records=[_record(device_info={"gen": 2, "model": "SNSW-001P16EU"})],
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/devices/192.168.1.10")
 
         assert response.status_code == 200
@@ -424,7 +452,7 @@ class TestServer:
         """Test the device page offers a manual backup action."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/devices/192.168.1.10")
 
         assert response.status_code == 200
@@ -437,7 +465,7 @@ class TestServer:
         """Test the device page opens its web UI in a new tab."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/devices/192.168.1.10")
 
         assert response.status_code == 200
@@ -460,7 +488,7 @@ class TestServer:
                     )
                 ],
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 index_response = client.get("/")
                 device_response = client.get("/devices/10.10.4.130")
                 doc_id = app.state.store.all()[0]["doc_id"]
@@ -474,7 +502,7 @@ class TestServer:
         """Test backing up a single device from its detail page."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_device = AsyncMock(return_value=True)
                 response = client.post(
@@ -490,7 +518,7 @@ class TestServer:
         """Test a failed single-device backup redirects with an error flag."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_device = AsyncMock(return_value=False)
                 response = client.post(
@@ -504,7 +532,7 @@ class TestServer:
         """Test that an unknown device cannot be backed up manually."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_device = AsyncMock(return_value=True)
                 response = client.post(
@@ -519,7 +547,7 @@ class TestServer:
         """Test the device page shows manual backup results."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 done = client.get("/devices/192.168.1.10?backup_done=1")
                 failed = client.get("/devices/192.168.1.10?backup_failed=1")
 
@@ -530,7 +558,7 @@ class TestServer:
         """Test the overview offers a backup action for each device."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -542,7 +570,7 @@ class TestServer:
         """Test a per-device backup can return to the overview."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_device = AsyncMock(return_value=True)
                 response = client.post(
@@ -559,7 +587,7 @@ class TestServer:
         """Test a failed overview backup redirects with an error flag."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_device = AsyncMock(return_value=False)
                 response = client.post(
@@ -574,7 +602,7 @@ class TestServer:
         """Test that the device backup redirect cannot leave the application."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_device = AsyncMock(return_value=True)
                 response = client.post(
@@ -589,7 +617,7 @@ class TestServer:
         """Test that a device backup only redirects to known pages."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_device = AsyncMock(return_value=True)
                 response = client.post(
@@ -604,7 +632,7 @@ class TestServer:
         """Test the overview shows manual backup results."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 done = client.get("/?backup_done=1")
                 failed = client.get("/?backup_failed=1")
 
@@ -624,7 +652,7 @@ class TestServer:
                     }
                 ],
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 index_response = client.get("/")
                 device_response = client.get("/devices/192.168.1.20")
                 doc_id = app.state.store.all()[0]["doc_id"]
@@ -641,7 +669,7 @@ class TestServer:
         """Test the device page for an unknown device."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/devices/192.168.1.99")
 
         assert response.status_code == 404
@@ -651,7 +679,7 @@ class TestServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir, records=[_record()])
             doc_id = store.all()[0]["doc_id"]
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get(f"/backups/{doc_id}")
 
         assert response.status_code == 200
@@ -666,7 +694,7 @@ class TestServer:
         """Test the backup page for an unknown backup."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/backups/999")
 
         assert response.status_code == 404
@@ -676,7 +704,7 @@ class TestServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir, records=[_record()])
             record = store.all()[0]
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get(f"/backups/{record['doc_id']}/download")
 
         assert response.status_code == 200
@@ -688,7 +716,7 @@ class TestServer:
         """Test downloading an unknown backup."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/backups/999/download")
 
         assert response.status_code == 404
@@ -697,7 +725,7 @@ class TestServer:
         """Test triggering a backup run."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post("/backup", follow_redirects=False)
@@ -711,7 +739,7 @@ class TestServer:
         """Test that triggering a backup makes it visible as active immediately."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 client.post("/backup", follow_redirects=False)
@@ -723,7 +751,7 @@ class TestServer:
         """Test that triggering a backup keeps the user on the current page."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post(
@@ -738,7 +766,7 @@ class TestServer:
         """Test that triggering a backup can return to the settings page."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post(
@@ -753,7 +781,7 @@ class TestServer:
         """Test that triggering a backup only redirects to known pages."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post(
@@ -778,7 +806,7 @@ class TestServer:
         """Test that the redirect target cannot leave the application."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post(
@@ -793,7 +821,7 @@ class TestServer:
         """Test that only the redirect path is used."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post(
@@ -815,7 +843,7 @@ class TestServer:
                     _record(ip_address="10.0.0.1"),
                 ],
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post("/backup", follow_redirects=False)
@@ -831,7 +859,7 @@ class TestServer:
         """Test the health endpoint."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/health")
 
         assert response.status_code == 200
@@ -845,7 +873,7 @@ class TestServer:
         """Test that the overview page links to the settings page."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/")
 
         assert response.status_code == 200
@@ -855,7 +883,7 @@ class TestServer:
         """Test the settings page shows the current schedule controls."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/settings")
 
         assert response.status_code == 200
@@ -871,7 +899,7 @@ class TestServer:
         """Test the settings page confirms a successful save."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/settings?saved=1")
 
         assert response.status_code == 200
@@ -881,7 +909,7 @@ class TestServer:
         """Test that the settings page shows the default retention policy."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/settings")
 
         assert response.status_code == 200
@@ -901,7 +929,7 @@ class TestServer:
         """Test that the settings page offers device management."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/settings")
 
         assert response.status_code == 200
@@ -914,7 +942,7 @@ class TestServer:
         """Test the streamed discovery results offer a select none action."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/settings")
 
         assert response.status_code == 200
@@ -930,7 +958,7 @@ class TestServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
             store.save_settings({"ip_addresses": ["192.168.1.10", "2001:db8::1"]})
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.get("/settings")
 
         assert response.status_code == 200
@@ -942,7 +970,7 @@ class TestServer:
         """Test adding device IP addresses via the settings page."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/devices",
                     data={"ip_addresses": "192.168.1.10\n2001:0db8::0001"},
@@ -960,7 +988,7 @@ class TestServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
             store.save_settings({"interval": 3600, "future_setting": "keep me"})
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/devices",
                     data={"ip_addresses": "192.168.1.10"},
@@ -979,7 +1007,7 @@ class TestServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
             store.save_settings({"ip_addresses": ["192.168.1.10"]})
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/devices",
                     data={"ip_addresses": "192.168.1.10\n192.168.1.11"},
@@ -995,7 +1023,7 @@ class TestServer:
         """Test that invalid device addresses are rejected without saving."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/devices",
                     data={"ip_addresses": "192.168.1.10\nnot-an-ip"},
@@ -1012,7 +1040,7 @@ class TestServer:
         """Test that an empty device selection is rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/devices",
                     content=b"",
@@ -1033,7 +1061,7 @@ class TestServer:
                     "ip_addresses": ["192.168.1.10", "192.168.1.11"],
                 }
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/devices/remove",
                     data={"ip_address": "192.168.1.10"},
@@ -1067,7 +1095,7 @@ class TestServer:
                         DiscoveredDevice("2001:0db8::0001"),
                     ],
                 ),
-                TestClient(app) as client,
+                _client(app) as client,
             ):
                 response = client.post("/settings/discover")
 
@@ -1096,7 +1124,7 @@ class TestServer:
                     "shelly_backup.server.discover_shelly_device_details",
                     return_value=[DiscoveredDevice("192.168.1.10")],
                 ),
-                TestClient(app) as client,
+                _client(app) as client,
             ):
                 response = client.post("/settings/discover")
 
@@ -1113,7 +1141,7 @@ class TestServer:
                     "shelly_backup.server.discover_shelly_device_details",
                     side_effect=RuntimeError("discovery failed"),
                 ),
-                TestClient(app) as client,
+                _client(app) as client,
             ):
                 response = client.post("/settings/discover")
 
@@ -1135,7 +1163,7 @@ class TestServer:
                         DiscoveredDevice("not-an-ip"),
                     ],
                 ),
-                TestClient(app) as client,
+                _client(app) as client,
             ):
                 response = client.post("/settings/discover")
 
@@ -1157,7 +1185,7 @@ class TestServer:
                         DiscoveredDevice("192.168.1.3"),
                     ],
                 ),
-                TestClient(app) as client,
+                _client(app) as client,
             ):
                 response = client.post("/settings/discover")
 
@@ -1192,7 +1220,7 @@ class TestServer:
                         ]
                     ),
                 ),
-                TestClient(app) as client,
+                _client(app) as client,
             ):
                 response = client.post("/settings/discover/stream")
 
@@ -1218,7 +1246,7 @@ class TestServer:
                     "shelly_backup.server.iter_shelly_device_details",
                     side_effect=RuntimeError("discovery failed"),
                 ),
-                TestClient(app) as client,
+                _client(app) as client,
             ):
                 response = client.post("/settings/discover/stream")
 
@@ -1236,7 +1264,7 @@ class TestServer:
         """Test adding multiple devices selected from discovery results."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/devices",
                     content=urlencode(
@@ -1262,7 +1290,7 @@ class TestServer:
                 records=[_record(ip_address="192.168.1.10")],
             )
             store.save_settings({"ip_addresses": ["10.0.0.1"]})
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post("/backup", follow_redirects=False)
@@ -1275,7 +1303,7 @@ class TestServer:
         """Test saving a backup retention policy."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/retention",
                     data={
@@ -1309,7 +1337,7 @@ class TestServer:
                     "future_setting": "keep me",
                 }
             )
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/retention",
                     data={
@@ -1337,7 +1365,7 @@ class TestServer:
         """Test that negative retention values are rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/retention",
                     data={
@@ -1358,7 +1386,7 @@ class TestServer:
         """Test that non-numeric retention values are rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/retention",
                     data={
@@ -1378,7 +1406,7 @@ class TestServer:
         """Test that a policy cannot expire every backup."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/retention",
                     data={
@@ -1401,7 +1429,7 @@ class TestServer:
         """Test that unreasonably large retention values are rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings/retention",
                     data={
@@ -1421,7 +1449,7 @@ class TestServer:
         """Test saving an automatic backup schedule."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 response = client.post(
                     "/settings",
@@ -1452,7 +1480,7 @@ class TestServer:
         """Test saving a custom interval that is not a preset."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings",
                     data={
@@ -1473,7 +1501,7 @@ class TestServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
             store.save_settings({"interval": 60, "future_setting": "keep me"})
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings",
                     data={
@@ -1494,7 +1522,7 @@ class TestServer:
         """Test that invalid intervals are rejected without saving."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 response = client.post(
                     "/settings",
@@ -1517,7 +1545,7 @@ class TestServer:
         """Test that a missing interval is rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post("/settings", data={}, follow_redirects=False)
 
                 assert response.status_code == 400
@@ -1527,7 +1555,7 @@ class TestServer:
         """Test that enabling automatic backups requires a next run time."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings",
                     data={
@@ -1547,7 +1575,7 @@ class TestServer:
         """Test that an enabled schedule needs a positive interval."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 response = client.post(
                     "/settings",
                     data={
@@ -1567,7 +1595,7 @@ class TestServer:
         """Test that disabling automatic backups keeps the interval."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(tmpdir)
-            with TestClient(app) as client:
+            with _client(app) as client:
                 scheduler = app.state.scheduler
                 response = client.post(
                     "/settings",
@@ -1646,3 +1674,520 @@ class TestServer:
         _, kwargs = mock_run.call_args
         assert kwargs["host"] == "127.0.0.1"
         assert kwargs["port"] == 8080
+
+
+def _login(client, username, password):
+    """Sign a test client in and return the redirect response."""
+    return client.post(
+        "/login",
+        data={"username": username, "password": password},
+        follow_redirects=False,
+    )
+
+
+class TestAuthentication:
+    """Tests for the first-run setup, login, and session handling."""
+
+    def test_first_start_redirects_to_setup(self):
+        """Test that all pages redirect to setup while no user exists."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_setup_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/", follow_redirects=False)
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/setup"
+                assert client.get("/settings").status_code == 200
+                assert "Create admin account" in client.get("/settings").text
+
+    def test_health_is_public_during_setup(self):
+        """Test that the health endpoint never requires authentication."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_setup_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/health")
+
+                assert response.status_code == 200
+                assert response.json()["status"] == "ok"
+
+    def test_setup_page_renders(self):
+        """Test that the setup page offers the admin account form."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_setup_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/setup")
+
+                assert response.status_code == 200
+                assert "Create admin account" in response.text
+                assert 'name="confirm_password"' in response.text
+
+    def test_setup_creates_admin_and_signs_in(self):
+        """Test that completing setup creates the admin and starts a session."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, users = _create_setup_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/setup",
+                    data={
+                        "username": "admin",
+                        "password": "unit-test-login-pass-1",
+                        "confirm_password": "unit-test-login-pass-1",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/"
+                assert "shelly_backup_session=" in response.headers["set-cookie"]
+                created = users.list_users()[0]
+                assert created.username == "admin"
+                assert created.role is UserRole.ADMIN
+                assert client.get("/").status_code == 200
+                assert "Sign out" in client.get("/").text
+
+    def test_setup_rejects_mismatched_passwords(self):
+        """Test that setup asks for matching passwords."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, users = _create_setup_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/setup",
+                    data={
+                        "username": "admin",
+                        "password": "unit-test-login-pass-1",
+                        "confirm_password": "different-pass",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "do not match" in response.text
+                assert users.has_users() is False
+
+    def test_setup_rejects_invalid_account_data(self):
+        """Test that setup validates username and password."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, users = _create_setup_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/setup",
+                    data={
+                        "username": "admin",
+                        "password": "short",
+                        "confirm_password": "short",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "at least 12 characters" in response.text
+                assert users.has_users() is False
+
+    def test_setup_redirects_once_configured(self):
+        """Test that the setup page is closed once a user exists."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/setup", follow_redirects=False)
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/login"
+
+    def test_setup_post_is_closed_once_a_user_exists(self):
+        """Test that account setup cannot be used after onboarding."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/setup",
+                    data={
+                        "username": "second",
+                        "password": "another-password-1",
+                        "confirm_password": "another-password-1",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/login"
+
+    def test_unauthenticated_requests_redirect_to_login(self):
+        """Test that protected pages redirect signed-out users to login."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with TestClient(app) as client:
+                response = client.get("/", follow_redirects=False)
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/login"
+                assert "Sign in" in client.get("/").text
+
+    def test_login_requires_valid_credentials(self):
+        """Test that wrong credentials are rejected with a message."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/login",
+                    data={"username": _ADMIN_USERNAME, "password": "wrong-password"},
+                )
+
+                assert response.status_code == 401
+                assert "Invalid username or password" in response.text
+                response = _login(client, _ADMIN_USERNAME, _ADMIN_PASSWORD)
+                assert response.status_code == 303
+
+    def test_login_page_redirects_signed_in_users(self):
+        """Test that the login page is skipped for signed-in users."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.get("/login", follow_redirects=False)
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/"
+
+    def test_logout_ends_the_session(self):
+        """Test that signing out clears the session and cookie."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            with _client(app) as client:
+                response = client.post("/logout", follow_redirects=False)
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/login"
+                assert client.get("/", follow_redirects=False).status_code == 303
+                assert len(users.list_users()) == 1
+
+    def test_invalid_and_expired_session_cookies_are_rejected(self):
+        """Test that unknown session tokens do not grant access."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                client.cookies.set("shelly_backup_session", "made-up-token")
+                response = client.get("/", follow_redirects=False)
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/login"
+
+    def test_viewer_can_browse_and_download_but_not_act(self):
+        """Test the permissions of a read-only account."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            doc_id = store.all()[0]["doc_id"]
+            client = TestClient(app)
+            assert _login(client, "guest", "viewer-password-1").status_code == 303
+
+            assert client.get("/").status_code == 200
+            assert client.get("/devices/192.168.1.10").status_code == 200
+            assert client.get(f"/backups/{doc_id}").status_code == 200
+            assert client.get(f"/backups/{doc_id}/download").status_code == 200
+            assert client.get("/api/status").status_code == 200
+
+            assert client.get("/settings").status_code == 403
+            assert client.get("/users").status_code == 403
+            assert client.post("/backup", data={}).status_code == 403
+            assert (
+                client.post("/devices/192.168.1.10/backup", data={}).status_code == 403
+            )
+            assert client.post("/settings", data={}).status_code == 403
+            assert client.post("/settings/retention", data={}).status_code == 403
+            assert client.post("/settings/devices", data={}).status_code == 403
+            assert client.post("/settings/devices/remove", data={}).status_code == 403
+            assert client.post("/settings/discover", data={}).status_code == 403
+
+    def test_signed_in_user_page_hides_admin_actions_for_viewers(self):
+        """Test that read-only users do not see settings or backup buttons."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            client = TestClient(app)
+            _login(client, "guest", "viewer-password-1")
+
+            text = client.get("/").text
+
+            assert "Run backup now" not in text
+            assert "/settings" not in text
+            assert "/users" not in text
+            assert "Back up Kitchen now" not in text
+            assert "Sign out" in text
+            assert "guest" in text
+
+    def test_admin_page_shows_navigation_for_admins(self):
+        """Test that admins see settings, users, and backup controls."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                text = client.get("/").text
+
+                assert "Run backup now" in text
+                assert 'href="/settings"' in text
+                assert 'href="/users"' in text
+
+
+class TestUserManagement:
+    """Tests for the user management page and routes."""
+
+    def _viewer_client(self, tmpdir):
+        """Create an app and a client signed in with a read-only account."""
+        app, _ = _create_app(tmpdir)
+        app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+        client = TestClient(app)
+        _login(client, "guest", "viewer-password-1")
+        return app, client
+
+    def test_users_page_lists_accounts(self):
+        """Test that the users page shows all accounts and roles."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            with _client(app) as client:
+                response = client.get("/users")
+
+                assert response.status_code == 200
+                assert "admin" in response.text
+                assert "guest" in response.text
+                assert "Administrator" in response.text
+                assert "Read-only" in response.text
+                assert ">You</span>" in response.text
+
+    def test_create_user(self):
+        """Test that admins can create accounts with both roles."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            with _client(app) as client:
+                response = client.post(
+                    "/users",
+                    data={
+                        "username": "operator",
+                        "password": "operator-password-1",
+                        "role": "admin",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/users?saved=1"
+                created = users.verify_credentials("operator", "operator-password-1")
+                assert created is not None
+                assert created.role is UserRole.ADMIN
+
+    def test_create_user_rejects_duplicates(self):
+        """Test that duplicate usernames are reported on the users page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/users",
+                    data={
+                        "username": "Admin",
+                        "password": "another-password-1",
+                        "role": "viewer",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "already taken" in response.text
+
+    def test_create_user_rejects_invalid_data(self):
+        """Test that invalid new accounts are rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            with _client(app) as client:
+                response = client.post(
+                    "/users",
+                    data={"username": "guest", "password": "short", "role": "viewer"},
+                )
+
+                assert response.status_code == 400
+                assert "at least 12 characters" in response.text
+                response = client.post(
+                    "/users",
+                    data={
+                        "username": "guest",
+                        "password": "all-letters-and-symbols",
+                        "role": "viewer",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "at least one digit" in response.text
+                response = client.post(
+                    "/users",
+                    data={
+                        "username": "guest",
+                        "password": "lettersanddigits1234",
+                        "role": "viewer",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "special character" in response.text
+                response = client.post(
+                    "/users",
+                    data={
+                        "username": "guest",
+                        "password": "viewer-password-1",
+                        "role": "wizard",
+                    },
+                )
+
+                assert response.status_code == 400
+                assert "Invalid role" in response.text
+                assert [user.username for user in users.list_users()] == ["admin"]
+
+    def test_change_user_role(self):
+        """Test that admins can change the role of a user."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            with _client(app) as client:
+                response = client.post(
+                    f"/users/{guest.user_id}/role",
+                    data={"role": "admin"},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert users.get_user(guest.user_id).role is UserRole.ADMIN
+
+    def test_change_role_rejects_demoting_last_admin(self):
+        """Test that the last admin cannot be demoted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            admin = users.list_users()[0]
+            with _client(app) as client:
+                response = client.post(
+                    f"/users/{admin.user_id}/role",
+                    data={"role": "viewer"},
+                )
+
+                assert response.status_code == 400
+                assert "last admin" in response.text
+                assert users.get_user(admin.user_id).role is UserRole.ADMIN
+
+    def test_reset_password_of_other_user(self):
+        """Test that admins can set a new password for other users."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            token = users.create_session(guest.user_id)
+            with _client(app) as client:
+                response = client.post(
+                    f"/users/{guest.user_id}/password",
+                    data={"password": "fresh-password-1"},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert users.verify_credentials("guest", "fresh-password-1") is not None
+                assert users.resolve_session(token) is None
+
+    def test_reset_own_password_keeps_session_alive(self):
+        """Test that changing your own password keeps you signed in."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            admin = users.list_users()[0]
+            with _client(app) as client:
+                old_token = client.cookies.get("shelly_backup_session")
+                response = client.post(
+                    f"/users/{admin.user_id}/password",
+                    data={"password": "unit-test-login-pass-1"},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert client.get("/users").status_code == 200
+                assert users.resolve_session(old_token) is None
+
+    def test_reset_password_rejects_invalid(self):
+        """Test that password rules also apply on the users page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            with _client(app) as client:
+                response = client.post(
+                    f"/users/{guest.user_id}/password",
+                    data={"password": "short"},
+                )
+
+                assert response.status_code == 400
+                assert "at least 12 characters" in response.text
+
+    def test_delete_user(self):
+        """Test that admins can delete other accounts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            guest = users.create_user("guest", "viewer-password-1", UserRole.VIEWER)
+            with _client(app) as client:
+                response = client.post(
+                    f"/users/{guest.user_id}/delete",
+                    data={},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert response.headers["location"] == f"/users?deleted={guest.user_id}"
+                assert users.get_user(guest.user_id) is None
+
+    def test_delete_rejects_own_and_last_admin_account(self):
+        """Test that the acting admin account cannot be deleted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            admin = users.list_users()[0]
+            with _client(app) as client:
+                response = client.post(f"/users/{admin.user_id}/delete", data={})
+
+                assert response.status_code == 400
+                assert "own account" in response.text
+                assert users.get_user(admin.user_id) is not None
+
+    def test_delete_rejects_unknown_user(self):
+        """Test that deleting an unknown account fails gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post("/users/999/delete", data={})
+
+                assert response.status_code == 400
+                assert "not found" in response.text
+
+    def test_user_routes_reject_non_admins(self):
+        """Test that read-only users cannot manage accounts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, client = self._viewer_client(tmpdir)
+            guest = app.state.users.verify_credentials("guest", "viewer-password-1")
+            assert guest is not None
+
+            assert client.get("/users").status_code == 403
+            assert (
+                client.post(
+                    "/users",
+                    data={
+                        "username": "x",
+                        "password": "password-1234",
+                        "role": "viewer",
+                    },
+                ).status_code
+                == 403
+            )
+            assert (
+                client.post(f"/users/{guest.user_id}/role", data={}).status_code == 403
+            )
+            assert (
+                client.post(f"/users/{guest.user_id}/delete", data={}).status_code
+                == 403
+            )
+            assert (
+                client.post(f"/users/{guest.user_id}/password", data={}).status_code
+                == 403
+            )

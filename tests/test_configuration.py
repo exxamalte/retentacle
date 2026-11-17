@@ -113,6 +113,12 @@ class TestConfiguration:
             config = Configuration(None, tmpdir, None)
             assert config.database_path() == Path(tmpdir) / "shelly_backup.json"
 
+    def test_users_path(self):
+        """Test user database path is inside the target folder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            assert config.users_path() == Path(tmpdir) / "shelly_backup_users.json"
+
     def test_interval_default(self):
         """Test interval defaults to one hour."""
         config = Configuration(None, None, None)
