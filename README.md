@@ -14,6 +14,7 @@ settings to a device is not supported.
 * Configurable retention for monthly, weekly, daily, and hourly backups.
 * Web UI for browsing devices, backup history, and individual backup snapshots.
 * User accounts with admin and read-only roles, created on first startup.
+* Optional OpenID Connect single sign-on with automatic user provisioning.
 * One-shot backup mode for scripts and cron jobs.
 * Auto-discovery of Shelly devices via mDNS (`--discover`).
 * Fetches device configuration:
@@ -86,6 +87,8 @@ The web server ships with simple built-in user management:
 * On the first start — while no user accounts exist — every page redirects to a
   setup wizard where you create the initial **admin** account. You are then
   signed in automatically.
+* Accounts are identified by **email address**, which also links them to
+  single sign-on identities (see below).
 * **Administrators** can do everything: browse and download backups, run
   backups, change settings, and manage user accounts in the Users section of
   the Settings page.
@@ -103,15 +106,49 @@ Login sessions are stored server-side and referenced by HTTP-only cookies.
 They expire after 30 days. Changing a password signs that user out of all
 sessions.
 
+### OpenID Connect single sign-on
+
+The Settings page has a **Single sign-on (OpenID Connect)** section to let
+users sign in through an external identity provider:
+
+* Enable it and enter the **issuer URL**, **client ID**, and **client secret**
+  of a confidential OIDC client registered for this app. All endpoints are
+  discovered automatically from the issuer's well-known OpenID configuration,
+  and the authorization code flow is used. Register the redirect URI
+  `https://<your-host>/oidc/callback` (or the URL derived from the optional
+  **Public URL** field, which you should set when running behind a reverse
+  proxy).
+* Users are matched to local accounts by their **email claim**. Signing in
+  with the same email address as a local account therefore links to it — the
+  easiest way to bootstrap an admin: create the local admin account during
+  setup with your provider email, then sign in via OIDC.
+* Optionally turn on **automatically create accounts for new OIDC users**.
+  New accounts are created as read-only; promote them in the Users section.
+* Optionally **disable local password sign-in**. The provider connection is
+  verified when you save, so an unreachable issuer cannot lock you out; the
+  login page then offers only the provider button and local password requests
+  are rejected.
+* Identity is anchored on the provider's userinfo endpoint, which the app
+  calls with the just-exchanged access token; unverified email claims are
+  refused.
+
+Note that the OIDC **client secret is stored in the settings database**
+(`shelly_backup.json`) as part of the web settings, so keep the target folder
+protected. If you disable password sign-in and your provider becomes
+unreachable, you can re-enable it by editing the settings file: remove the
+`oidc` entry (or set `disable_password_login` to `false`) in the `settings`
+document and restart the server.
+
 ### Web UI
 
 * `/` - devices overview with scheduler status, backup counts, last backup times, and per-device indicators for automatic backups and recent backups.
 * `/devices/<ip-address>` - all backups for one device, newest first, plus a link to the device web UI.
 * `/backups/<id>` - metadata and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
-* `/settings` - configure the backup schedule and device IP addresses, and manage user accounts, roles, and passwords (admin only).
+* `/settings` - configure the backup schedule, device IP addresses, and single sign-on, and manage user accounts, roles, and passwords (admin only).
 * `/setup` - first-run wizard to create the initial admin account.
 * `/login`, `/logout` - sign in and out.
+* `/oidc/login`, `/oidc/callback` - OpenID Connect single sign-on flow.
 * `/api/status` - scheduler status and live backup progress as JSON.
 * `/health` - server and scheduler status as JSON (the only page that does not require a login).
 * `/users` - legacy alias that redirects to `/settings`.
@@ -232,5 +269,8 @@ target folder. Each record contains the device IP address, a timestamp, the
 device generation, basic device information, and the fetched configuration.
 
 User accounts and login sessions are stored in a separate TinyDB database
-named `shelly_backup_users.json` in the same folder. Passwords are stored as
-salted PBKDF2 hashes and session tokens only appear as salted hashes.
+named `shelly_backup_users.json` in the same folder. Accounts are keyed by
+email address, passwords are stored as salted PBKDF2 hashes and session
+tokens only appear as salted hashes. The OpenID Connect client secret lives
+in the settings document of `shelly_backup.json`, so protect the target
+folder accordingly.

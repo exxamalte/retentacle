@@ -13,33 +13,48 @@
       </div>
     {% endif %}
 
-    <form method="post" action="/login" class="device-form">
-      <div class="form-field">
-        <label for="username">Username</label>
-        <input
-          class="input"
-          id="username"
-          name="username"
-          value="{{ username }}"
-          autocomplete="username"
-          autofocus
-          required
-        >
-      </div>
-      <div class="form-field">
-        <label for="password">Password</label>
-        <input
-          class="input"
-          type="password"
-          id="password"
-          name="password"
-          autocomplete="current-password"
-          required
-        >
-      </div>
-      <div class="form-actions">
-        <button class="button primary" type="submit">Sign in</button>
-      </div>
-    </form>
+    {% if oidc_enabled %}
+      <form method="get" action="/oidc/login" class="device-form">
+        <div class="form-actions">
+          <button class="button primary" type="submit">Sign in with your account provider</button>
+        </div>
+      </form>
+      <p class="field-help">
+        Single sign-on via OpenID Connect. Your account is matched by email
+        address.
+      </p>
+    {% endif %}
+
+    {% if password_login_enabled %}
+      <form method="post" action="/login" class="device-form">
+        <div class="form-field">
+          <label for="email">Email address</label>
+          <input
+            class="input"
+            id="email"
+            name="email"
+            type="email"
+            value="{{ email }}"
+            autocomplete="username"
+            autofocus
+            required
+          >
+        </div>
+        <div class="form-field">
+          <label for="password">Password</label>
+          <input
+            class="input"
+            type="password"
+            id="password"
+            name="password"
+            autocomplete="current-password"
+            required
+          >
+        </div>
+        <div class="form-actions">
+          <button class="button primary" type="submit">Sign in</button>
+        </div>
+      </form>
+    {% endif %}
   </section>
 {% endblock %}

@@ -24,16 +24,22 @@
 
     <form method="post" action="/setup" class="device-form">
       <div class="form-field">
-        <label for="username">Username</label>
+        <label for="email">Email address</label>
         <input
           class="input"
-          id="username"
-          name="username"
-          value="{{ username }}"
+          id="email"
+          name="email"
+          type="email"
+          value="{{ email }}"
+          placeholder="you@example.com"
           autocomplete="username"
           autofocus
           required
         >
+        <p class="field-help">
+          Use the address you would also use with single sign-on, so both
+          methods link to the same account.
+        </p>
       </div>
       <div class="form-field">
         <label for="password">Password</label>
@@ -74,7 +80,8 @@
 
     <p class="field-help" style="margin-top: 1rem;">
       The admin account can manage devices, settings, backups and users. You can
-      add read-only accounts later on the Settings page.
+      add read-only accounts later on the Settings page, and configure OpenID
+      Connect single sign-on there as well.
     </p>
   </section>
 {% endblock %}

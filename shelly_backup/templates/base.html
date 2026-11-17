@@ -715,7 +715,7 @@
               <button class="button primary" type="submit">Run backup now</button>
             </form>
           {% endif %}
-          <span class="badge" title="Signed in as {{ user.role.label }}">{{ user.username }}</span>
+          <span class="badge" title="Signed in as {{ user.role.label }}">{{ user.email }}</span>
           <form method="post" action="/logout">
             <button class="button" type="submit">Sign out</button>
           </form>
