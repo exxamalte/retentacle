@@ -9,6 +9,7 @@
 * Name the backups database file `retentacle_backups.json`.
 * Replace the header email badge and sign-out button with an avatar account menu showing the role, settings link, and app version, using the OIDC profile picture when available.
 * Remove the Settings button from the header; it lives in the account menu now.
+* Serve the app logo from a static folder inside the package and show it in the header and as favicon.
 * Stop building standalone executables; install the Python package instead.
 * Add user management with admin and read-only roles.
 * Onboard the initial admin account through a first-run setup wizard.

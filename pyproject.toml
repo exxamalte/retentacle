@@ -55,7 +55,7 @@ Changelog = "https://github.com/exxamalte/retentacle/blob/main/CHANGELOG.md"
 include = ["retentacle*"]
 
 [tool.setuptools.package-data]
-retentacle = ["templates/*.html"]
+retentacle = ["templates/*.html", "static/*"]
 
 [tool.ruff.lint]
 select = [

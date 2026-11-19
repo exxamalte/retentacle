@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import ipaddress
 import json
 import logging
+from pathlib import Path
 import re
 from urllib.parse import parse_qs, quote, urlparse, urlsplit
 
@@ -18,6 +19,7 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from .auth import (
@@ -51,6 +53,7 @@ from .users import UserRole, UserStore
 
 _LOGGER = logging.getLogger(__name__)
 
+_STATIC_DIR = Path(__file__).parent / "static"
 _DISCOVERY_TIMEOUT = 5.0
 _INTERVAL_PRESETS = (
     ("1h", "Every hour"),
@@ -1146,6 +1149,7 @@ def create_app(
     app.state.store = store
     app.state.scheduler = scheduler
     app.state.users = users
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     register_auth(app, users, store)
     _register_routes(app, configuration, store, scheduler)
     return app

@@ -1814,6 +1814,28 @@ class TestAuthentication:
                 assert response.status_code == 303
                 assert response.headers["location"] == "/login"
 
+    def test_logo_is_public_and_linked(self):
+        """Test the static logo loads without signing in and is referenced."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                asset = client.get("/static/retentacle-logo.svg")
+
+                assert asset.status_code == 200
+                assert asset.headers["content-type"].startswith("image/")
+                text = client.get("/login").text
+                assert 'href="/static/retentacle-logo.svg"' in text
+                assert 'src="/static/retentacle-logo.svg"' in text
+
+    def test_logo_public_during_setup(self):
+        """Test the logo loads while the first-run wizard is active."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_setup_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/static/retentacle-logo.svg")
+
+        assert response.status_code == 200
+
     def test_setup_post_is_closed_once_a_user_exists(self):
         """Test that account setup cannot be used after onboarding."""
         with tempfile.TemporaryDirectory() as tmpdir:

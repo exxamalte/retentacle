@@ -27,6 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SESSION_COOKIE = "retentacle_session"
 _HEALTH_PATH = "/health"
+_STATIC_PREFIX = "/static/"
 _PUBLIC_PATHS = frozenset({"/health", "/oidc/login", "/oidc/callback"})
 _SETUP_PATHS = frozenset({"/setup"})
 _LOGIN_PATHS = frozenset({"/login"})
@@ -414,10 +415,15 @@ def _register_middleware(app: FastAPI, users: UserStore) -> None:
     @app.middleware("http")
     async def authentication_middleware(request: Request, call_next):
         """Require setup or a valid login session for all protected routes."""
+        path = request.url.path
+        # Health checks and static assets, such as the logo shown on the
+        # login and setup pages, are always public.
+        if path == _HEALTH_PATH or path.startswith(_STATIC_PREFIX):
+            return await call_next(request)
         token = request.cookies.get(SESSION_COOKIE, "")
         user = users.resolve_session(token) if token else None
         request.state.user = user
-        target = _redirect_target(request.url.path, user, users.has_users())
+        target = _redirect_target(path, user, users.has_users())
         if target is not None:
             return RedirectResponse(url=target, status_code=303)
         return await call_next(request)

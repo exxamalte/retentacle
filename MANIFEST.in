@@ -1,3 +1,4 @@
 prune tests
 recursive-include retentacle/templates *.html
+recursive-include retentacle/static *
 include configuration.example.yaml
