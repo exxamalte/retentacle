@@ -1,0 +1,19 @@
+services:
+  retentacle:
+    build: .
+    image: retentacle:latest
+    container_name: retentacle
+    ports:
+      - "8080:8080"
+    volumes:
+      - retentacle-data:/data
+    restart: unless-stopped
+
+    # mDNS device discovery only works when the container shares the host
+    # network. Uncomment the line below (and remove the ports mapping) to
+    # enable it, then add --discover to the command:
+    # network_mode: host
+    # command: ["--host", "0.0.0.0", "--target-folder", "/data", "--discover"]
+
+volumes:
+  retentacle-data:

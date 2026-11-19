@@ -36,6 +36,8 @@ For development, install the test dependencies as well:
 pip install -e ".[tests]"
 ```
 
+To run Retentacle as a container service instead, see [Docker](#docker).
+
 ## Running the server
 
 Start the server:
@@ -205,6 +207,54 @@ older backups after the next successful backup. The defaults keep 12 monthly,
 4 weekly, 7 daily, and 24 hourly backups. A single backup can count towards
 several periods. Set a period to `0` to keep none for it; at least one period
 must remain above zero.
+
+## Docker
+
+The repository includes a `Dockerfile` and a `docker-compose.yml` for running
+Retentacle as a container service.
+
+Build and start the container with Docker Compose:
+
+```commandline
+docker compose up -d --build
+```
+
+Or with plain Docker:
+
+```commandline
+docker build -t retentacle .
+docker run -d --name retentacle -p 8080:8080 -v retentacle-data:/data retentacle
+```
+
+Then open `http://localhost:8080` and complete the first-run setup wizard to
+create the admin account. The container runs as a non-root user, listens on
+all interfaces, and reports health via the public `/health` endpoint.
+
+* **Data** — everything Retentacle stores (the `retentacle_backups.json`,
+  `retentacle_settings.json` and `retentacle_users.json` databases) lives in
+  `/data` inside the container. Keep it on a named volume, as in the compose
+  example, or bind-mount a folder; with a bind mount make sure the folder is
+  writable by UID 10001, the user the container runs as.
+* **Options** — command line flags work as usual by replacing the container
+  command, for example `docker run ... retentacle --port 9000`. Update the
+  port mapping accordingly; the built-in health check assumes the default
+  port 8080.
+* **Device discovery** — mDNS discovery needs direct access to the local
+  network. Run the container with `network_mode: host` (see the commented
+  lines in the compose file) and add `--discover`, or configure device IP
+  addresses in the web UI instead, which works with plain port mappings.
+* **Configuration file** — to use a `configuration.yaml`, place it in the
+  data folder and override the command:
+
+  ```commandline
+  docker run ... -v retentacle-data:/data retentacle --configuration /data/configuration.yaml
+  ```
+
+* **One-shot backups** — the same image works for cron-style single runs:
+
+  ```commandline
+  docker run --rm -v retentacle-data:/data retentacle --once --configuration /data/configuration.yaml
+  ```
 
 ## One-shot backup
 
