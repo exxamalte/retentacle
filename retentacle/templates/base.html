@@ -398,11 +398,6 @@
       padding: 0.42rem;
     }
 
-    .button[aria-current="page"] {
-      border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-      color: var(--accent-strong);
-    }
-
     .card {
       padding: 1.1rem 1.25rem;
       border: 1px solid var(--border);
@@ -891,11 +886,6 @@
       <div class="header-actions">
         {% if user %}
           {% if user.role == 'admin' %}
-            <a
-              class="button"
-              href="/settings"
-              {% if request.url.path == '/settings' %}aria-current="page"{% endif %}
-            >Settings</a>
             <form method="post" action="/backup?redirect={{ request.url.path }}">
               <button class="button primary" type="submit">Run backup now</button>
             </form>

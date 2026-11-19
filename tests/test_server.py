@@ -1944,14 +1944,15 @@ class TestAuthentication:
             assert "guest" in text
 
     def test_admin_page_shows_navigation_for_admins(self):
-        """Test that admins see settings and backup controls in the header."""
+        """Test that admins see the backup button and account menu entries."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir, records=[_record()])
             with _client(app) as client:
                 text = client.get("/").text
 
                 assert "Run backup now" in text
-                assert 'href="/settings"' in text
+                assert 'class="avatar-menu-item" href="/settings"' in text
+                assert ">Settings</a>" not in text
                 redirect = client.get("/users", follow_redirects=False)
 
                 assert redirect.status_code == 303
