@@ -17,6 +17,7 @@ from .oidc import (
     discover_endpoints,
     exchange_code,
     fetch_userinfo,
+    id_token_picture,
     oidc_config_from_settings,
 )
 from .storage import BackupStore
@@ -27,6 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SESSION_COOKIE = "retentacle_session"
 _HEALTH_PATH = "/health"
+_STATIC_PREFIX = "/static/"
 _PUBLIC_PATHS = frozenset({"/health", "/oidc/login", "/oidc/callback"})
 _SETUP_PATHS = frozenset({"/setup"})
 _LOGIN_PATHS = frozenset({"/login"})
@@ -249,24 +251,32 @@ def _oidc_redirect_uri(request: Request, config: OIDCConfig) -> str:
     return f"{base}/oidc/callback"
 
 
-async def _oidc_verified_email(config: OIDCConfig, code: str, redirect_uri: str) -> str:
-    """Return the verified email address for an authorization code.
+async def _oidc_verified_email(
+    config: OIDCConfig, code: str, redirect_uri: str
+) -> tuple[str, object]:
+    """Return the verified email address and picture claim for a code.
 
     Identity is anchored on the userinfo endpoint: the access token was just
     exchanged at the provider's own token endpoint, so a successful userinfo
-    call proves the profile belongs to the authenticated user.
+    call proves the profile belongs to the authenticated user. Providers that
+    do not put the ``picture`` claim into their userinfo response (for example
+    when the needed scope is not granted) are covered by the ID token fallback.
     """
     endpoints = await asyncio.to_thread(discover_endpoints, config.issuer)
-    access_token = await asyncio.to_thread(
+    tokens = await asyncio.to_thread(
         exchange_code, config, endpoints, code, redirect_uri
     )
+    access_token = str(tokens["access_token"])
     profile = await asyncio.to_thread(fetch_userinfo, endpoints, access_token)
     if profile.get("email_verified") is False:
         raise ValueError("The email address of your OIDC account is not verified.")
     email = str(profile.get("email") or "").strip()
     if not email:
         raise ValueError("The OIDC profile did not include an email address.")
-    return email
+    picture = profile.get("picture")
+    if not picture:
+        picture = id_token_picture(tokens.get("id_token"), email)
+    return email, picture
 
 
 def _oidc_local_user(users: UserStore, config: OIDCConfig, email: str) -> User | None:
@@ -343,7 +353,7 @@ async def _oidc_process_callback(
             status_code=400,
         )
     try:
-        email = await _oidc_verified_email(config, code, stored[1])
+        email, picture = await _oidc_verified_email(config, code, stored[1])
         user = _oidc_local_user(users, config, email)
     except (OIDCError, ValueError) as exc:
         _LOGGER.warning("OIDC sign-in failed: %s", exc)
@@ -356,6 +366,8 @@ async def _oidc_process_callback(
             email=email,
             status_code=403,
         )
+    # Keep the stored profile picture in sync with the provider's claim.
+    users.set_picture(user.user_id, picture)
     token = start_session(users, user)
     response = RedirectResponse(url="/", status_code=303)
     return with_session_cookie(response, token, users.session_max_age)
@@ -410,10 +422,15 @@ def _register_middleware(app: FastAPI, users: UserStore) -> None:
     @app.middleware("http")
     async def authentication_middleware(request: Request, call_next):
         """Require setup or a valid login session for all protected routes."""
+        path = request.url.path
+        # Health checks and static assets, such as the logo shown on the
+        # login and setup pages, are always public.
+        if path == _HEALTH_PATH or path.startswith(_STATIC_PREFIX):
+            return await call_next(request)
         token = request.cookies.get(SESSION_COOKIE, "")
         user = users.resolve_session(token) if token else None
         request.state.user = user
-        target = _redirect_target(request.url.path, user, users.has_users())
+        target = _redirect_target(path, user, users.has_users())
         if target is not None:
             return RedirectResponse(url=target, status_code=303)
         return await call_next(request)
