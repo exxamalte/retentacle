@@ -15,7 +15,7 @@ authors = [
 description = "A simple backup tool for Shelly devices."
 readme = "README.md"
 license = {file = "LICENSE"}
-keywords = ["shelly", "backup"]
+keywords = ["shelly", "backup", "iot"]
 classifiers = [
   "Programming Language :: Python :: 3.14",
   "License :: OSI Approved :: Apache Software License",
@@ -47,9 +47,9 @@ tests = [
 retentacle = "retentacle.cli:main"
 
 [project.urls]
-Repository = "https://github.com/exxamalte/shelly-backup"
-Issues = "https://github.com/exxamalte/shelly-backup/issues"
-Changelog = "https://github.com/exxamalte/shelly-backup/blob/main/CHANGELOG.md"
+Repository = "https://github.com/exxamalte/retentacle"
+Issues = "https://github.com/exxamalte/retentacle/issues"
+Changelog = "https://github.com/exxamalte/retentacle/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["retentacle*"]
