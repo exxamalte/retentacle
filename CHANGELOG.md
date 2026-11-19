@@ -11,6 +11,7 @@
 * Remove the Settings button from the header; it lives in the account menu now.
 * Serve the app logo from a static folder inside the package and show it in the header and as favicon.
 * Add a Docker deployment option with a Dockerfile, docker-compose example and data volume.
+* Publish multi-architecture container images to the GitHub Container Registry from CI.
 * Stop building standalone executables; install the Python package instead.
 * Add user management with admin and read-only roles.
 * Onboard the initial admin account through a first-run setup wizard.

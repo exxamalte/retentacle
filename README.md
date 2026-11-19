@@ -210,8 +210,21 @@ must remain above zero.
 
 ## Docker
 
-The repository includes a `Dockerfile` and a `docker-compose.yml` for running
-Retentacle as a container service.
+Retentacle publishes a multi-architecture (amd64 and arm64) container image
+to the GitHub Container Registry whenever `main` is updated or a version tag
+is pushed:
+
+```commandline
+docker pull ghcr.io/exxamalte/retentacle:latest
+docker run -d --name retentacle -p 8080:8080 -v retentacle-data:/data \
+  ghcr.io/exxamalte/retentacle:latest
+```
+
+Tags include `latest` (default branch), the release name for version tags,
+`main`, and `sha-<commit>` for individual builds.
+
+The repository also includes a `Dockerfile` and a `docker-compose.yml` for
+building and running Retentacle from source.
 
 Build and start the container with Docker Compose:
 
