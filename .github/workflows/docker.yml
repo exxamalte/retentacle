@@ -20,6 +20,23 @@ jobs:
     - name: Show image name
       run: echo "Publishing $IMAGE_NAME"
 
+    - name: Read application version
+      id: version
+      run: |
+        python3 - <<'PY'
+        import os
+        import re
+        import tomllib
+
+        with open("pyproject.toml", "rb") as handle:
+            project_version = tomllib.load(handle)["project"]["version"]
+        # Docker tags may only contain [A-Za-z0-9_.-].
+        docker_version = re.sub(r"[^A-Za-z0-9_.-]", "-", project_version)
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+            handle.write(f"version={docker_version}\n")
+        print(f"Application version: {docker_version}")
+        PY
+
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
 
@@ -40,10 +57,15 @@ jobs:
       with:
         images: ${{ env.IMAGE_NAME }}
         tags: |
+          # Development builds: branch, commit and the pyproject version.
           type=ref,event=branch
-          type=ref,event=tag
-          type=raw,value=latest,enable={{is_default_branch}}
           type=sha
+          type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.ref_type != 'tag' }}
+          # Releases: vX.Y.Z tags get the plain version and become latest.
+          # Prereleases (vX.Y.ZbN) keep only their tag name, never latest.
+          type=ref,event=tag
+          type=semver,pattern={{version}}
+          type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, 'b') }}
 
     - name: Build and push
       uses: docker/build-push-action@v6

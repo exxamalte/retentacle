@@ -220,8 +220,12 @@ docker run -d --name retentacle -p 8080:8080 -v retentacle-data:/data \
   ghcr.io/exxamalte/retentacle:latest
 ```
 
-Tags include `latest` (default branch), the release name for version tags,
-`main`, and `sha-<commit>` for individual builds.
+Tags work as follows: proper releases (a `vX.Y.Z` git tag) publish the plain
+version (e.g. `2026.11.0`) and update `latest`. Development builds on the
+default branch publish the current application version from `pyproject.toml`
+(e.g. `2026.11.0-dev`), plus `main` and `sha-<commit>` identifiers — they
+never touch `latest`. Prereleases (version tags with a `b` suffix, e.g.
+`v2026.11.0b1`) publish only their tag name and `sha-<commit>`.
 
 The repository also includes a `Dockerfile` and a `docker-compose.yml` for
 building and running Retentacle from source.
