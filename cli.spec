@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['shelly_backup/cli.py'],
+    ['retentacle/cli.py'],
     pathex=[],
     binaries=[],
-    datas=[('shelly_backup/templates', 'shelly_backup/templates')],
+    datas=[('retentacle/templates', 'retentacle/templates')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='shellybackup',
+    name='retentacle',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

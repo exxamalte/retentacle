@@ -5,10 +5,10 @@ from unittest.mock import Mock, patch
 
 import httpx
 
-from shelly_backup.backup import Backup
-from shelly_backup.configuration import Configuration
-from shelly_backup.retention import RetentionPolicy
-from shelly_backup.storage import BackupStore
+from retentacle.backup import Backup
+from retentacle.configuration import Configuration
+from retentacle.retention import RetentionPolicy
+from retentacle.storage import BackupStore
 
 
 class TestBackup:
@@ -48,7 +48,7 @@ class TestBackup:
                 backup, "_device_backup", return_value=True
             ) as mock_device_backup,
             patch.object(config, "ip_addresses") as mock_ip_addresses,
-            patch("shelly_backup.backup.discover_shelly_devices") as mock_discover,
+            patch("retentacle.backup.discover_shelly_devices") as mock_discover,
         ):
             assert backup.execute(["192.168.1.2", "192.168.1.3"]) == [
                 "192.168.1.2",
@@ -131,7 +131,7 @@ class TestBackup:
         backup = Backup(config)
         with (
             patch(
-                "shelly_backup.backup.discover_shelly_devices",
+                "retentacle.backup.discover_shelly_devices",
                 return_value=["192.168.1.1", "192.168.1.2"],
             ) as mock_discover,
             patch.object(backup, "_device_backup", return_value=True),
@@ -340,7 +340,7 @@ class TestBackup:
             }
             assert mock_get.call_count == 3
 
-    @patch("shelly_backup.backup.BackupStore")
+    @patch("retentacle.backup.BackupStore")
     def test_init_creates_store(self, mock_store_class):
         """Test that a store is created from the configuration by default."""
         with tempfile.TemporaryDirectory() as tmpdir:

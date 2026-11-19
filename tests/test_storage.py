@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 import tempfile
 
-from shelly_backup.retention import RetentionPolicy
-from shelly_backup.storage import BackupStore
+from retentacle.retention import RetentionPolicy
+from retentacle.storage import BackupStore
 
 
 def _record(
@@ -31,7 +31,7 @@ class TestBackupStore:
     def test_path(self):
         """Test the database path property."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "shelly_backup.json"
+            path = Path(tmpdir) / "retentacle.json"
             store = BackupStore(path)
             assert store.path == path
 
@@ -50,7 +50,7 @@ class TestBackupStore:
     def test_add_creates_database_and_returns_document_id(self):
         """Test adding a record creates the database and returns its ID."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "nested" / "shelly_backup.json"
+            path = Path(tmpdir) / "nested" / "retentacle.json"
             store = BackupStore(path)
             record = _record()
 
@@ -63,7 +63,7 @@ class TestBackupStore:
     def test_add_multiple_and_all_sorted_newest_first(self):
         """Test that all records are returned newest first."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(_record(timestamp="2026-11-15T10:00:00+00:00"))
             store.add(_record(timestamp="2026-11-15T12:00:00+00:00"))
             store.add(_record(timestamp="2026-11-15T11:00:00+00:00"))
@@ -79,7 +79,7 @@ class TestBackupStore:
     def test_get(self):
         """Test getting a single record by document ID."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             record = _record()
             doc_id = store.add(record)
 
@@ -88,7 +88,7 @@ class TestBackupStore:
     def test_get_missing_document(self):
         """Test getting a document ID that does not exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(_record())
 
             assert store.get(99) is None
@@ -96,7 +96,7 @@ class TestBackupStore:
     def test_by_device(self):
         """Test filtering backups by device, newest first."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(
                 _record(
                     ip_address="192.168.1.10",
@@ -127,7 +127,7 @@ class TestBackupStore:
     def test_by_device_without_matches(self):
         """Test filtering by a device that has no backups."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(_record())
 
             assert store.by_device("10.0.0.1") == []
@@ -135,7 +135,7 @@ class TestBackupStore:
     def test_prune_removes_expired_backups_for_one_device(self):
         """Test that pruning only affects the selected device."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(
                 _record(
                     ip_address="192.168.1.10",
@@ -179,7 +179,7 @@ class TestBackupStore:
     def test_prune_with_disabled_policy_keeps_all(self):
         """Test that a disabled policy does not delete backups."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(_record(timestamp="2026-11-15T10:00:00+00:00"))
             store.add(_record(timestamp="2026-11-15T12:00:00+00:00"))
 
@@ -194,13 +194,13 @@ class TestBackupStore:
     def test_devices_without_records(self):
         """Test device summaries without any records."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             assert store.devices() == []
 
     def test_devices_summary(self):
         """Test grouping backups into device summaries."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(
                 _record(
                     ip_address="192.168.1.10",
@@ -238,7 +238,7 @@ class TestBackupStore:
     def test_devices_sorted_naturally_by_ip(self):
         """Test that device summaries are sorted by IP address."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             for ip_address in ("192.168.1.100", "192.168.1.2", "10.0.0.1"):
                 store.add(_record(ip_address=ip_address))
 
@@ -253,7 +253,7 @@ class TestBackupStore:
     def test_devices_display_name_fallbacks(self):
         """Test display name fallbacks for generation 1 and 2 devices."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(
                 _record(
                     ip_address="192.168.1.10",
@@ -287,7 +287,7 @@ class TestBackupStore:
     def test_devices_uses_generation_1_configured_name(self):
         """Test that generation 1 uses the name from its settings."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(
                 _record(
                     ip_address="10.10.4.130",
@@ -308,7 +308,7 @@ class TestBackupStore:
     def test_devices_uses_generation_2_settings_name_as_fallback(self):
         """Test that generation 2/3 can fall back to the configured name."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(
                 _record(
                     ip_address="192.168.1.10",
@@ -326,7 +326,7 @@ class TestBackupStore:
     def test_devices_prefers_device_info_name(self):
         """Test that the device info name wins over the settings name."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(
                 _record(
                     ip_address="192.168.1.10",
@@ -344,7 +344,7 @@ class TestBackupStore:
     def test_devices_ignores_records_without_ip_address(self):
         """Test that records without an IP address are not grouped."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(_record(ip_address=None))
             store.add(_record(ip_address="192.168.1.10"))
 
@@ -356,7 +356,7 @@ class TestBackupStore:
     def test_concurrent_adds(self):
         """Test that concurrent writes are serialised."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
 
             with ThreadPoolExecutor(max_workers=4) as executor:
                 list(
@@ -383,7 +383,7 @@ class TestBackupStore:
     def test_latest_backup_time(self):
         """Test that the latest backup time is returned."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(_record(timestamp="2026-11-15T10:00:00+00:00"))
             store.add(_record(timestamp="2026-11-15T12:00:00+00:00"))
             store.add(_record(timestamp="2026-11-15T11:00:00+00:00"))
@@ -395,7 +395,7 @@ class TestBackupStore:
     def test_latest_backup_time_with_invalid_timestamp(self):
         """Test that an invalid latest timestamp is ignored."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.add(_record(timestamp="not-a-timestamp"))
 
             assert store.latest_backup_time() is None
@@ -410,7 +410,7 @@ class TestBackupStore:
     def test_save_and_get_settings(self):
         """Test that settings persist across store instances."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "shelly_backup.json"
+            path = Path(tmpdir) / "retentacle.json"
             store = BackupStore(path)
             store.save_settings({"interval": 1800, "future_setting": True})
 
@@ -426,7 +426,7 @@ class TestBackupStore:
     def test_save_settings_replaces_previous_values(self):
         """Test that saving settings replaces previously stored values."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             store.save_settings({"interval": 1800, "future_setting": True})
 
             store.save_settings({"interval": 900})
@@ -436,7 +436,7 @@ class TestBackupStore:
     def test_settings_do_not_affect_backups(self):
         """Test that settings and backup records are stored separately."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = BackupStore(Path(tmpdir) / "shelly_backup.json")
+            store = BackupStore(Path(tmpdir) / "retentacle.json")
             record = _record()
             store.add(record)
             store.save_settings({"interval": 1800})

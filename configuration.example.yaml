@@ -1,7 +1,7 @@
-# Example Shelly Backup configuration.
+# Example Retentacle configuration.
 #
 # Copy this file, adjust the values, and start the server with:
-#   shelly-backup --configuration configuration.yaml
+#   retentacle --configuration configuration.yaml
 
 ip_addresses:
   - 192.168.10.20

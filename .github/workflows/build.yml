@@ -44,8 +44,8 @@ jobs:
             CMD_BUILD: >
                 pyinstaller cli.spec &&
                 cd dist/ &&
-                tar cfz shellybackup.tar.gz shellybackup
-            OUT_FILE_NAME: shellybackup.tar.gz
+                tar cfz retentacle.tar.gz retentacle
+            OUT_FILE_NAME: retentacle.tar.gz
             ASSET_MIME: application/gzip
           - os: ubuntu-24.04-arm
             TARGET: linux
@@ -54,8 +54,8 @@ jobs:
             CMD_BUILD: >
                 pyinstaller cli.spec &&
                 cd dist/ &&
-                tar cfz shellybackup.tar.gz shellybackup
-            OUT_FILE_NAME: shellybackup.tar.gz
+                tar cfz retentacle.tar.gz retentacle
+            OUT_FILE_NAME: retentacle.tar.gz
             ASSET_MIME: application/gzip
     steps:
     - name: Checkout
@@ -85,5 +85,5 @@ jobs:
       with:
         upload_url: ${{ needs.createrelease.outputs.release_url }}
         asset_path: ./dist/${{ matrix.OUT_FILE_NAME}}
-        asset_name: shellybackup-${{steps.version.outputs.version_number}}-${{ matrix.TARGET }}-${{ matrix.ARCH }}.tar.gz
+        asset_name: retentacle-${{steps.version.outputs.version_number}}-${{ matrix.TARGET }}-${{ matrix.ARCH }}.tar.gz
         asset_content_type: ${{ matrix.ASSET_MIME}}

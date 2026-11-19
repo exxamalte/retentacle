@@ -1,9 +1,10 @@
-# Shelly Backup
+# Retentacle
 
 [![Build Status](https://github.com/exxamalte/shelly-backup/actions/workflows/tests.yml/badge.svg)](https://github.com/exxamalte/shelly-backup/actions/workflows/tests.yml)
 [![codecov](https://codecov.io/gh/exxamalte/shelly-backup/graph/badge.svg?token=47OELOAUP4)](https://codecov.io/gh/exxamalte/shelly-backup)
 
-Long-running backup server and command line tool for Shelly devices. It fetches
+Retentacle is a long-running backup server and command line tool for Shelly
+devices. It fetches
 the configuration of Shelly devices, stores snapshots in a local TinyDB
 database, and provides a web UI for browsing backups per device. This might be
 useful if a device loses its configuration for whatever reason. Restoring
@@ -40,13 +41,13 @@ pip install -e ".[tests]"
 Start the server with one or more device IP addresses:
 
 ```commandline
-shelly-backup --ip-address 192.168.10.20
+retentacle --ip-address 192.168.10.20
 ```
 
 Alternatively, run it as a Python module:
 
 ```commandline
-python -m shelly_backup --ip-address 192.168.10.20
+python -m retentacle --ip-address 192.168.10.20
 ```
 
 By default the web server listens on `http://127.0.0.1:8080` and runs a backup
@@ -74,7 +75,7 @@ them later on the Settings page.
 To expose the web UI on your local network, bind to all interfaces:
 
 ```commandline
-shelly-backup --host 0.0.0.0 --port 8080
+retentacle --host 0.0.0.0 --port 8080
 ```
 
 The server requires a login for all pages except `/health`. Only expose it on
@@ -135,7 +136,7 @@ users sign in through an external identity provider:
   refused.
 
 Note that the OIDC **client secret is stored in the settings database**
-(`shelly_backup.json`) as part of the web settings, so keep the target folder
+(`retentacle.json`) as part of the web settings, so keep the target folder
 protected. If you disable password sign-in and your provider becomes
 unreachable, you can re-enable it by editing the settings file: remove the
 `oidc` entry (or set `disable_password_login` to `false`) in the `settings`
@@ -200,14 +201,14 @@ must remain above zero.
 To run a single backup and exit, use `--once`:
 
 ```commandline
-shelly-backup --once --ip-address 192.168.10.20
+retentacle --once --ip-address 192.168.10.20
 ```
 
-The database is stored in the current folder as `shelly_backup.json` unless a
+The database is stored in the current folder as `retentacle.json` unless a
 different folder is specified:
 
 ```commandline
-shelly-backup --once --ip-address 192.168.10.20 --target-folder backup_folder
+retentacle --once --ip-address 192.168.10.20 --target-folder backup_folder
 ```
 
 ## Auto-discovery
@@ -215,7 +216,7 @@ shelly-backup --once --ip-address 192.168.10.20 --target-folder backup_folder
 You can automatically discover Shelly devices on the network via mDNS:
 
 ```commandline
-shelly-backup --discover
+retentacle --discover
 ```
 
 The **Settings** page also has a **Discover devices** button. It scans the
@@ -258,7 +259,7 @@ target_folder: backup_folder
 ```
 
 ```commandline
-shelly-backup --configuration configuration.yaml
+retentacle --configuration configuration.yaml
 ```
 
 Configuration file values take precedence over command line options. Settings
@@ -266,13 +267,13 @@ saved in the web UI take precedence over both.
 
 ## Database
 
-Backups are stored in a TinyDB database named `shelly_backup.json` inside the
+Backups are stored in a TinyDB database named `retentacle.json` inside the
 target folder. Each record contains the device IP address, a timestamp, the
 device generation, basic device information, and the fetched configuration.
 
 User accounts and login sessions are stored in a separate TinyDB database
-named `shelly_backup_users.json` in the same folder. Accounts are keyed by
+named `retentacle_users.json` in the same folder. Accounts are keyed by
 email address, passwords are stored as salted PBKDF2 hashes and session
 tokens only appear as salted hashes. The OpenID Connect client secret lives
-in the settings document of `shelly_backup.json`, so protect the target
+in the settings document of `retentacle.json`, so protect the target
 folder accordingly.

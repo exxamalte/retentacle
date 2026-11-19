@@ -141,9 +141,7 @@ class BackupScheduler:
             # No explicitly configured next run: run once immediately and
             # schedule later runs from the completion time.
             self._next_run_at = datetime.now(UTC)
-        self._task = asyncio.create_task(
-            self._run_loop(), name="shelly-backup-scheduler"
-        )
+        self._task = asyncio.create_task(self._run_loop(), name="retentacle-scheduler")
 
     async def stop(self) -> None:
         """Stop the background scheduler."""

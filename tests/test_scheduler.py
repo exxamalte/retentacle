@@ -8,7 +8,7 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 
-from shelly_backup.scheduler import BackupScheduler
+from retentacle.scheduler import BackupScheduler
 
 
 class SlowBackup:
@@ -131,7 +131,7 @@ class TestBackupScheduler:
         assert scheduler.run_count == 2
 
     @pytest.mark.asyncio
-    @patch("shelly_backup.scheduler.asyncio.to_thread", new_callable=AsyncMock)
+    @patch("retentacle.scheduler.asyncio.to_thread", new_callable=AsyncMock)
     async def test_run_once_uses_to_thread(self, mock_to_thread):
         """Test that the backup runs outside the event loop."""
         mock_to_thread.return_value = ["192.168.1.10"]
@@ -285,7 +285,7 @@ class TestBackupScheduler:
         assert backup.max_active == 1
 
     @pytest.mark.asyncio
-    @patch("shelly_backup.scheduler.asyncio.to_thread", new_callable=AsyncMock)
+    @patch("retentacle.scheduler.asyncio.to_thread", new_callable=AsyncMock)
     async def test_run_device_uses_to_thread(self, mock_to_thread):
         """Test that a single-device backup runs outside the event loop."""
         mock_to_thread.return_value = True

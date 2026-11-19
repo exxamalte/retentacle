@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from shelly_backup.retention import (
+from retentacle.retention import (
     DEFAULT_RETENTION,
     RetentionPolicy,
     retention_policy_from_settings,

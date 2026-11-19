@@ -1,4 +1,4 @@
-"""Shelly Backup."""
+"""Retentacle."""
 
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -18,7 +18,7 @@ ProgressCallback = Callable[[str, bool], None]
 
 
 class Backup:
-    """Shelly Backup."""
+    """Retentacle."""
 
     _configuration: Configuration
     _backup_store: BackupStore

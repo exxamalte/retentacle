@@ -1,11 +1,11 @@
 """Tests for constants."""
 
-from shelly_backup import consts
+from retentacle import consts
 
 
 def test_application_name():
     """Test application name constant."""
-    assert consts.APPLICATION_NAME == "Shelly Backup"
+    assert consts.APPLICATION_NAME == "Retentacle"
 
 
 def test_mdns_service_types():
@@ -19,4 +19,4 @@ def test_server_defaults():
     assert consts.DEFAULT_INTERVAL == 3600
     assert consts.DEFAULT_HOST == "127.0.0.1"
     assert consts.DEFAULT_PORT == 8080
-    assert consts.DATABASE_FILENAME == "shelly_backup.json"
+    assert consts.DATABASE_FILENAME == "retentacle.json"
