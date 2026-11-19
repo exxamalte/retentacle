@@ -69,6 +69,14 @@ class User:
     email: str
     role: UserRole
     created_at: datetime
+    picture: str | None = None
+
+
+def _picture_url(value: object) -> str | None:
+    """Return a safe absolute image URL, or None."""
+    if isinstance(value, str) and value.lower().startswith(("http://", "https://")):
+        return value.strip()
+    return None
 
 
 def validate_email(email: object) -> str:
@@ -163,6 +171,7 @@ def _user_from_document(document: Any) -> User | None:
         email=str(email),
         role=role,
         created_at=created_at,
+        picture=_picture_url(document.get("picture")),
     )
 
 
@@ -326,6 +335,21 @@ class UserStore:
             try:
                 db.table(_USERS_TABLE).update(
                     {"role": validated_role.value}, doc_ids=[user_id]
+                )
+            finally:
+                db.close()
+
+    def set_picture(self, user_id: int, picture: object) -> None:
+        """Store the profile picture URL from the identity provider.
+
+        Values that are not absolute http(s) URLs, including empty ones,
+        clear the stored picture so a withdrawn claim does not linger.
+        """
+        with _LOCK:
+            db = TinyDB(self._path)
+            try:
+                db.table(_USERS_TABLE).update(
+                    {"picture": _picture_url(picture)}, doc_ids=[user_id]
                 )
             finally:
                 db.close()

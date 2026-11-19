@@ -106,6 +106,13 @@ Login sessions are stored server-side and referenced by HTTP-only cookies.
 They expire after 30 days. Changing a password signs that user out of all
 sessions.
 
+Signed-in users get an avatar in the top right corner instead of their email
+address and a sign-out button. Clicking it opens a menu with the account name
+and role at the top, a link to the Settings page (admins only), the sign-out
+action, and the app version at the bottom. The avatar shows the profile
+picture from the OIDC provider when the userinfo provides a `picture` claim,
+and falls back to the first letter of the email address otherwise.
+
 ### OpenID Connect single sign-on
 
 The Settings page has a **Single sign-on (OpenID Connect)** section to let

@@ -172,6 +172,34 @@ class TestUserStore:
 
             assert store.verify_credentials("sso@example.com", "password-1234") == user
 
+    def test_set_picture(self):
+        """Test storing and clearing the provider profile picture."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _store(tmpdir)
+            user = store.create_user("sso@example.com", None, UserRole.VIEWER)
+
+            assert user.picture is None
+
+            store.set_picture(user.user_id, "https://provider.example/avatar/1")
+
+            assert store.get_user(user.user_id).picture == (
+                "https://provider.example/avatar/1"
+            )
+
+            store.set_picture(user.user_id, "")
+
+            assert store.get_user(user.user_id).picture is None
+
+    def test_picture_rejects_unsafe_urls(self):
+        """Test that only absolute http(s) picture URLs are kept."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _store(tmpdir)
+            user = store.create_user("sso@example.com", None, UserRole.VIEWER)
+
+            store.set_picture(user.user_id, "javascript:alert(1)")
+
+            assert store.get_user(user.user_id).picture is None
+
     def test_password_is_stored_hashed(self):
         """Test that plain passwords never reach the database file."""
         with tempfile.TemporaryDirectory() as tmpdir:

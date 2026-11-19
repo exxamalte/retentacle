@@ -249,8 +249,10 @@ def _oidc_redirect_uri(request: Request, config: OIDCConfig) -> str:
     return f"{base}/oidc/callback"
 
 
-async def _oidc_verified_email(config: OIDCConfig, code: str, redirect_uri: str) -> str:
-    """Return the verified email address for an authorization code.
+async def _oidc_verified_email(
+    config: OIDCConfig, code: str, redirect_uri: str
+) -> tuple[str, object]:
+    """Return the verified email address and picture claim for a code.
 
     Identity is anchored on the userinfo endpoint: the access token was just
     exchanged at the provider's own token endpoint, so a successful userinfo
@@ -266,7 +268,7 @@ async def _oidc_verified_email(config: OIDCConfig, code: str, redirect_uri: str)
     email = str(profile.get("email") or "").strip()
     if not email:
         raise ValueError("The OIDC profile did not include an email address.")
-    return email
+    return email, profile.get("picture")
 
 
 def _oidc_local_user(users: UserStore, config: OIDCConfig, email: str) -> User | None:
@@ -343,7 +345,7 @@ async def _oidc_process_callback(
             status_code=400,
         )
     try:
-        email = await _oidc_verified_email(config, code, stored[1])
+        email, picture = await _oidc_verified_email(config, code, stored[1])
         user = _oidc_local_user(users, config, email)
     except (OIDCError, ValueError) as exc:
         _LOGGER.warning("OIDC sign-in failed: %s", exc)
@@ -356,6 +358,8 @@ async def _oidc_process_callback(
             email=email,
             status_code=403,
         )
+    # Keep the stored profile picture in sync with the provider's claim.
+    users.set_picture(user.user_id, picture)
     token = start_session(users, user)
     response = RedirectResponse(url="/", status_code=303)
     return with_session_cookie(response, token, users.session_max_age)

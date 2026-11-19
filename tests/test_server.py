@@ -28,6 +28,7 @@ from retentacle.server import (
     run_server,
 )
 from retentacle.storage import BackupStore
+from retentacle.templating import templates
 from retentacle.users import UserRole, UserStore
 
 _ADMIN_EMAIL = "admin@example.com"
@@ -2881,3 +2882,71 @@ class TestOIDCLogin:
                     )
                     is None
                 )
+
+
+class TestUserMenu:
+    """Tests for the avatar account menu in the header."""
+
+    def test_admin_avatar_menu_contents(self):
+        """Test the menu shows account, role, settings link and version."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                text = client.get("/").text
+
+        assert 'aria-label="Account menu"' in text
+        assert ">A</span>" in text
+        assert "admin@example.com" in text
+        assert "Administrator" in text
+        assert 'class="avatar-menu-item" href="/settings"' in text
+        assert "Sign out" in text
+        assert 'class="version-pill"' in text
+        version = templates.env.globals["application_version"]
+        assert f"Retentacle</strong> v{version}" in " ".join(text.split())
+
+    def test_viewer_avatar_menu_hides_settings(self):
+        """Test read-only accounts have no settings entry in their menu."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            client = TestClient(app)
+            _login(client, "guest@example.com", "viewer-password-1")
+            text = client.get("/").text
+
+        assert ">G</span>" in text
+        assert "Read-only" in text
+        assert 'class="avatar-menu-item" href="/settings"' not in text
+
+    def test_avatar_shows_provider_picture(self):
+        """Test the OIDC picture claim replaces the letter fallback."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            picture = "https://id.example.com/pic/alice.png"
+            with (
+                patch(
+                    "retentacle.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch("retentacle.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "retentacle.auth.fetch_userinfo",
+                    return_value={
+                        "email": _ADMIN_EMAIL,
+                        "email_verified": True,
+                        "picture": picture,
+                    },
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                client.get("/oidc/callback", params={"code": "c", "state": state})
+
+                assert app.state.users.get_user_by_email(_ADMIN_EMAIL).picture == (
+                    picture
+                )
+                text = client.get("/").text
+                assert f'src="{picture}"' in text
+                assert ">A</span>" not in text
