@@ -25,7 +25,7 @@ from .users import User, UserRole, UserStore
 
 _LOGGER = logging.getLogger(__name__)
 
-SESSION_COOKIE = "shelly_backup_session"
+SESSION_COOKIE = "retentacle_session"
 _HEALTH_PATH = "/health"
 _PUBLIC_PATHS = frozenset({"/health", "/oidc/login", "/oidc/callback"})
 _SETUP_PATHS = frozenset({"/setup"})

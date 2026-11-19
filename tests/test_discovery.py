@@ -5,8 +5,8 @@ from unittest.mock import Mock, call, patch
 
 import pytest
 
-from shelly_backup import consts
-from shelly_backup.discovery import (
+from retentacle import consts
+from retentacle.discovery import (
     DiscoveredDevice,
     ShellyServiceListener,
     _collect_from_browser,
@@ -351,9 +351,9 @@ class TestDiscoveredDevice:
 class TestIterShellyDeviceDetails:
     """Tests for iter_shelly_device_details."""
 
-    @patch("shelly_backup.discovery.time.sleep")
-    @patch("shelly_backup.discovery.ServiceBrowser")
-    @patch("shelly_backup.discovery.Zeroconf")
+    @patch("retentacle.discovery.time.sleep")
+    @patch("retentacle.discovery.ServiceBrowser")
+    @patch("retentacle.discovery.Zeroconf")
     def test_yields_devices_as_they_are_discovered(
         self, mock_zeroconf_class, mock_browser_class, mock_sleep
     ):
@@ -393,9 +393,9 @@ class TestIterShellyDeviceDetails:
 
         zeroconf.close.assert_called_once()
 
-    @patch("shelly_backup.discovery.time.sleep")
-    @patch("shelly_backup.discovery.ServiceBrowser")
-    @patch("shelly_backup.discovery.Zeroconf")
+    @patch("retentacle.discovery.time.sleep")
+    @patch("retentacle.discovery.ServiceBrowser")
+    @patch("retentacle.discovery.Zeroconf")
     def test_closes_zeroconf_when_consumer_stops(
         self, mock_zeroconf_class, mock_browser_class, mock_sleep
     ):
@@ -425,9 +425,9 @@ class TestIterShellyDeviceDetails:
 class TestDiscoverShellyDevices:
     """Tests for discover_shelly_devices."""
 
-    @patch("shelly_backup.discovery.time.sleep")
-    @patch("shelly_backup.discovery.ServiceBrowser")
-    @patch("shelly_backup.discovery.Zeroconf")
+    @patch("retentacle.discovery.time.sleep")
+    @patch("retentacle.discovery.ServiceBrowser")
+    @patch("retentacle.discovery.Zeroconf")
     def test_discovery(self, mock_zeroconf_class, mock_browser_class, mock_sleep):
         """Test discovering devices from both Shelly and HTTP service types."""
         zeroconf = mock_zeroconf_class.return_value
@@ -471,9 +471,9 @@ class TestDiscoverShellyDevices:
         ]
         zeroconf.close.assert_called_once()
 
-    @patch("shelly_backup.discovery.time.sleep")
-    @patch("shelly_backup.discovery.ServiceBrowser")
-    @patch("shelly_backup.discovery.Zeroconf")
+    @patch("retentacle.discovery.time.sleep")
+    @patch("retentacle.discovery.ServiceBrowser")
+    @patch("retentacle.discovery.Zeroconf")
     def test_discovery_collects_from_browsers(
         self, mock_zeroconf_class, mock_browser_class, mock_sleep
     ):
@@ -518,9 +518,9 @@ class TestDiscoverShellyDevices:
             ),
         ]
 
-    @patch("shelly_backup.discovery.time.sleep")
-    @patch("shelly_backup.discovery.ServiceBrowser")
-    @patch("shelly_backup.discovery.Zeroconf")
+    @patch("retentacle.discovery.time.sleep")
+    @patch("retentacle.discovery.ServiceBrowser")
+    @patch("retentacle.discovery.Zeroconf")
     def test_discovery_returns_device_details(
         self, mock_zeroconf_class, mock_browser_class, mock_sleep
     ):
@@ -552,9 +552,9 @@ class TestDiscoverShellyDevices:
             )
         ]
 
-    @patch("shelly_backup.discovery.time.sleep")
-    @patch("shelly_backup.discovery.ServiceBrowser")
-    @patch("shelly_backup.discovery.Zeroconf")
+    @patch("retentacle.discovery.time.sleep")
+    @patch("retentacle.discovery.ServiceBrowser")
+    @patch("retentacle.discovery.Zeroconf")
     def test_discovery_without_timeout(
         self, mock_zeroconf_class, mock_browser_class, mock_sleep
     ):
@@ -568,9 +568,9 @@ class TestDiscoverShellyDevices:
         assert mock_browser_class.call_count == 2
         zeroconf.close.assert_called_once()
 
-    @patch("shelly_backup.discovery.time.sleep")
-    @patch("shelly_backup.discovery.ServiceBrowser")
-    @patch("shelly_backup.discovery.Zeroconf")
+    @patch("retentacle.discovery.time.sleep")
+    @patch("retentacle.discovery.ServiceBrowser")
+    @patch("retentacle.discovery.Zeroconf")
     def test_discovery_closes_zeroconf_on_error(
         self, mock_zeroconf_class, mock_browser_class, mock_sleep
     ):
@@ -583,9 +583,9 @@ class TestDiscoverShellyDevices:
 
         zeroconf.close.assert_called_once()
 
-    @patch("shelly_backup.discovery.time.sleep")
-    @patch("shelly_backup.discovery.ServiceBrowser")
-    @patch("shelly_backup.discovery.Zeroconf")
+    @patch("retentacle.discovery.time.sleep")
+    @patch("retentacle.discovery.ServiceBrowser")
+    @patch("retentacle.discovery.Zeroconf")
     def test_discovery_suppresses_close_errors(
         self, mock_zeroconf_class, mock_browser_class, mock_sleep
     ):

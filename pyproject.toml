@@ -6,7 +6,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "shelly_backup"
+name = "retentacle"
 version  = "2026.5.0-dev"
 requires-python = ">= 3.14"
 authors = [
@@ -45,7 +45,7 @@ tests = [
 ]
 
 [project.scripts]
-shelly-backup = "shelly_backup.cli:main"
+retentacle = "retentacle.cli:main"
 
 [project.urls]
 Repository = "https://github.com/exxamalte/shelly-backup"
@@ -53,10 +53,10 @@ Issues = "https://github.com/exxamalte/shelly-backup/issues"
 Changelog = "https://github.com/exxamalte/shelly-backup/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
-include = ["shelly_backup*"]
+include = ["retentacle*"]
 
 [tool.setuptools.package-data]
-shelly_backup = ["templates/*.html"]
+retentacle = ["templates/*.html"]
 
 [tool.ruff.lint]
 select = [
@@ -164,7 +164,7 @@ ignore = [
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
 known-first-party = [
-    "shelly_backup",
+    "retentacle",
 ]
 combine-as-imports = true
 split-on-trailing-comma = false

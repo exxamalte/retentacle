@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
-from shelly_backup.oidc import (
+from retentacle.oidc import (
     DEFAULT_SCOPES,
     OIDCConfig,
     OIDCError,
@@ -62,7 +62,7 @@ class TestConfig:
                 "oidc": {
                     "enabled": True,
                     "issuer": " https://id.example.com/ ",
-                    "client_id": " shelly-backup ",
+                    "client_id": " retentacle ",
                     "client_secret": "secret",
                     "callback_url": "https://backup.example.com/oidc/callback",
                     "scopes": " openid email ",
@@ -74,7 +74,7 @@ class TestConfig:
         )
 
         assert config.issuer == "https://id.example.com"
-        assert config.client_id == "shelly-backup"
+        assert config.client_id == "retentacle"
         assert config.callback_url == "https://backup.example.com/oidc/callback"
         assert config.provider_name == "Acme ID"
         assert config.scopes == "openid email"
@@ -150,7 +150,7 @@ class TestAuthorizationUrl:
         config = OIDCConfig(
             enabled=True,
             issuer=_ISSUER,
-            client_id="shelly-backup",
+            client_id="retentacle",
             scopes="openid email",
         )
         url = authorization_url(
@@ -163,7 +163,7 @@ class TestAuthorizationUrl:
 
         assert url.startswith(_DISCOVERY["authorization_endpoint"] + "?")
         assert "response_type=code" in url
-        assert "client_id=shelly-backup" in url
+        assert "client_id=retentacle" in url
         assert "scope=openid+email" in url
         assert "state=state-1" in url
         assert "nonce=nonce-1" in url

@@ -10,10 +10,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from fastapi.testclient import TestClient
 import pytest
 
-from shelly_backup.configuration import Configuration
-from shelly_backup.discovery import DiscoveredDevice
-from shelly_backup.oidc import OIDCError
-from shelly_backup.server import (
+from retentacle.configuration import Configuration
+from retentacle.discovery import DiscoveredDevice
+from retentacle.oidc import OIDCError
+from retentacle.server import (
     _effective_ip_addresses,
     _format_datetime_local,
     _format_interval,
@@ -27,8 +27,8 @@ from shelly_backup.server import (
     create_app,
     run_server,
 )
-from shelly_backup.storage import BackupStore
-from shelly_backup.users import UserRole, UserStore
+from retentacle.storage import BackupStore
+from retentacle.users import UserRole, UserStore
 
 _ADMIN_EMAIL = "admin@example.com"
 _ADMIN_PASSWORD = "unit-test-login-pass-1"
@@ -231,6 +231,27 @@ class TestServer:
         assert "192.168.1.10" in response.text
         assert "192.168.1.11" in response.text
         assert "View backups" in response.text
+
+    def test_page_footer_shows_trademark_disclaimer(self):
+        """Test every page ends with the trademark disclaimer, not the DB path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                response = client.get("/")
+
+        text = " ".join(response.text.split())
+        assert "not associated with or endorsed by Shelly Europe Ltd" in text
+        assert "retentacle.json" not in text
+
+    def test_login_page_shows_disclaimer(self):
+        """Test the disclaimer is visible before signing in."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/login")
+
+        text = " ".join(response.text.split())
+        assert "Shelly is a trademark of its respective owner" in text
 
     def test_index_shows_device_backup_indicators(self):
         """Test the overview shows automatic and recent backup indicators."""
@@ -710,7 +731,7 @@ class TestServer:
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/json")
-        assert "shelly-backup-192.168.1.10-" in response.headers["content-disposition"]
+        assert "retentacle-192.168.1.10-" in response.headers["content-disposition"]
         assert response.json() == record
 
     def test_download_unknown_backup(self):
@@ -866,7 +887,7 @@ class TestServer:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["database"].endswith("shelly_backup.json")
+        assert data["database"].endswith("retentacle.json")
         assert data["devices"] == 1
         assert data["last_run"] is None
 
@@ -1083,7 +1104,7 @@ class TestServer:
             store.save_settings({"ip_addresses": ["192.168.1.10"]})
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_device_details",
+                    "retentacle.server.discover_shelly_device_details",
                     return_value=[
                         DiscoveredDevice("192.168.1.10"),
                         DiscoveredDevice(
@@ -1122,7 +1143,7 @@ class TestServer:
             store.save_settings({"ip_addresses": ["192.168.1.10"]})
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_device_details",
+                    "retentacle.server.discover_shelly_device_details",
                     return_value=[DiscoveredDevice("192.168.1.10")],
                 ),
                 _client(app) as client,
@@ -1139,7 +1160,7 @@ class TestServer:
             app, _ = _create_app(tmpdir)
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_device_details",
+                    "retentacle.server.discover_shelly_device_details",
                     side_effect=RuntimeError("discovery failed"),
                 ),
                 _client(app) as client,
@@ -1156,7 +1177,7 @@ class TestServer:
             app, _ = _create_app(tmpdir)
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_device_details",
+                    "retentacle.server.discover_shelly_device_details",
                     return_value=[
                         DiscoveredDevice("192.168.1.11"),
                         DiscoveredDevice("192.168.1.11"),
@@ -1179,7 +1200,7 @@ class TestServer:
             app, _ = _create_app(tmpdir)
             with (
                 patch(
-                    "shelly_backup.server.discover_shelly_device_details",
+                    "retentacle.server.discover_shelly_device_details",
                     return_value=[
                         DiscoveredDevice("192.168.1.20"),
                         DiscoveredDevice("2001:db8::1"),
@@ -1204,7 +1225,7 @@ class TestServer:
             store.save_settings({"ip_addresses": ["192.168.1.10"]})
             with (
                 patch(
-                    "shelly_backup.server.iter_shelly_device_details",
+                    "retentacle.server.iter_shelly_device_details",
                     return_value=iter(
                         [
                             DiscoveredDevice("192.168.1.10"),
@@ -1244,7 +1265,7 @@ class TestServer:
             app, _ = _create_app(tmpdir)
             with (
                 patch(
-                    "shelly_backup.server.iter_shelly_device_details",
+                    "retentacle.server.iter_shelly_device_details",
                     side_effect=RuntimeError("discovery failed"),
                 ),
                 _client(app) as client,
@@ -1664,7 +1685,7 @@ class TestServer:
 
             scheduler.stop.assert_awaited_once()
 
-    @patch("shelly_backup.server.uvicorn.run")
+    @patch("retentacle.server.uvicorn.run")
     def test_run_server(self, mock_run):
         """Test running the server with uvicorn."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1739,7 +1760,7 @@ class TestAuthentication:
 
                 assert response.status_code == 303
                 assert response.headers["location"] == "/"
-                assert "shelly_backup_session=" in response.headers["set-cookie"]
+                assert "retentacle_session=" in response.headers["set-cookie"]
                 created = users.list_users()[0]
                 assert created.email == "admin@example.com"
                 assert created.role is UserRole.ADMIN
@@ -1864,7 +1885,7 @@ class TestAuthentication:
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             with TestClient(app) as client:
-                client.cookies.set("shelly_backup_session", "made-up-token")
+                client.cookies.set("retentacle_session", "made-up-token")
                 response = client.get("/", follow_redirects=False)
 
                 assert response.status_code == 303
@@ -2126,7 +2147,7 @@ class TestUserManagement:
             users = app.state.users
             admin = users.list_users()[0]
             with _client(app) as client:
-                old_token = client.cookies.get("shelly_backup_session")
+                old_token = client.cookies.get("retentacle_session")
                 response = client.post(
                     f"/settings/users/{admin.user_id}/password",
                     data={"password": "unit-test-login-pass-1"},
@@ -2253,7 +2274,7 @@ def _seed_oidc(store, **overrides):
     oidc = {
         "enabled": True,
         "issuer": "https://id.example.com",
-        "client_id": "shelly-backup",
+        "client_id": "retentacle",
         "client_secret": _OIDC_SECRET,
         "callback_url": "",
         "scopes": "openid email profile",
@@ -2303,7 +2324,7 @@ class TestOIDCSettings:
                     data={
                         "oidc_enabled": "on",
                         "oidc_issuer": "https://id.example.com/realms/main/",
-                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_id": "retentacle",
                         "oidc_client_secret": _OIDC_SECRET,
                         "oidc_auto_create_users": "on",
                         "oidc_provider_name": "Acme ID",
@@ -2336,7 +2357,7 @@ class TestOIDCSettings:
                     data={
                         "oidc_enabled": "on",
                         "oidc_issuer": "https://id.example.com",
-                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_id": "retentacle",
                         "oidc_client_secret": "",
                     },
                     follow_redirects=False,
@@ -2355,7 +2376,7 @@ class TestOIDCSettings:
                     data={
                         "oidc_enabled": "on",
                         "oidc_issuer": "not-a-url",
-                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_id": "retentacle",
                         "oidc_client_secret": _OIDC_SECRET,
                     },
                 )
@@ -2392,7 +2413,7 @@ class TestOIDCSettings:
                     data={
                         "oidc_enabled": "on",
                         "oidc_issuer": "https://id.example.com",
-                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_id": "retentacle",
                         "oidc_client_secret": _OIDC_SECRET,
                         "oidc_callback_url": "id.example.com/oidc/callback",
                     },
@@ -2411,7 +2432,7 @@ class TestOIDCSettings:
                     data={
                         "oidc_enabled": "on",
                         "oidc_issuer": "https://id.example.com",
-                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_id": "retentacle",
                         "oidc_client_secret": "",
                         "oidc_disable_password_login": "on",
                     },
@@ -2428,7 +2449,7 @@ class TestOIDCSettings:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.server.discover_endpoints",
+                    "retentacle.server.discover_endpoints",
                     side_effect=OIDCError("could not connect"),
                 ),
                 _client(app) as client,
@@ -2438,7 +2459,7 @@ class TestOIDCSettings:
                     data={
                         "oidc_enabled": "on",
                         "oidc_issuer": "https://id.example.com",
-                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_id": "retentacle",
                         "oidc_client_secret": "",
                         "oidc_disable_password_login": "on",
                     },
@@ -2455,7 +2476,7 @@ class TestOIDCSettings:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.server.discover_endpoints",
+                    "retentacle.server.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
                 _client(app) as client,
@@ -2465,7 +2486,7 @@ class TestOIDCSettings:
                     data={
                         "oidc_enabled": "on",
                         "oidc_issuer": "https://id.example.com",
-                        "oidc_client_id": "shelly-backup",
+                        "oidc_client_id": "retentacle",
                         "oidc_disable_password_login": "on",
                     },
                     follow_redirects=False,
@@ -2559,7 +2580,7 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
                 TestClient(app) as client,
@@ -2571,7 +2592,7 @@ class TestOIDCLogin:
                 assert location.startswith("https://id.example.com/auth?")
                 query = parse_qs(urlsplit(location).query)
                 assert query["response_type"] == ["code"]
-                assert query["client_id"] == ["shelly-backup"]
+                assert query["client_id"] == ["retentacle"]
                 assert query["redirect_uri"] == ["http://testserver/oidc/callback"]
                 assert query["scope"] == ["openid email profile"]
                 assert query["state"]
@@ -2584,7 +2605,7 @@ class TestOIDCLogin:
             _seed_oidc(store, callback_url="https://backup.example.com/oidc/callback")
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
                 TestClient(app) as client,
@@ -2603,7 +2624,7 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     side_effect=OIDCError("no discovery document"),
                 ),
                 TestClient(app) as client,
@@ -2631,12 +2652,12 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch("retentacle.auth.exchange_code", return_value="access-token"),
                 patch(
-                    "shelly_backup.auth.fetch_userinfo",
+                    "retentacle.auth.fetch_userinfo",
                     return_value={
                         "email": "Admin@Example.com",
                         "email_verified": True,
@@ -2653,7 +2674,7 @@ class TestOIDCLogin:
 
                 assert response.status_code == 303
                 assert response.headers["location"] == "/"
-                assert "shelly_backup_session=" in response.headers["set-cookie"]
+                assert "retentacle_session=" in response.headers["set-cookie"]
                 assert "Settings" in client.get("/").text
 
     def test_oidc_callback_rejects_unknown_state(self):
@@ -2677,12 +2698,12 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch("retentacle.auth.exchange_code", return_value="access-token"),
                 patch(
-                    "shelly_backup.auth.fetch_userinfo",
+                    "retentacle.auth.fetch_userinfo",
                     return_value={"email": _ADMIN_EMAIL, "email_verified": True},
                 ),
                 TestClient(app) as client,
@@ -2709,7 +2730,7 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
                 TestClient(app) as client,
@@ -2730,11 +2751,11 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
                 patch(
-                    "shelly_backup.auth.exchange_code",
+                    "retentacle.auth.exchange_code",
                     side_effect=OIDCError("token endpoint returned HTTP 400."),
                 ),
                 TestClient(app) as client,
@@ -2754,12 +2775,12 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch("retentacle.auth.exchange_code", return_value="access-token"),
                 patch(
-                    "shelly_backup.auth.fetch_userinfo",
+                    "retentacle.auth.fetch_userinfo",
                     return_value={"sub": "abc"},
                 ),
                 TestClient(app) as client,
@@ -2779,12 +2800,12 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch("retentacle.auth.exchange_code", return_value="access-token"),
                 patch(
-                    "shelly_backup.auth.fetch_userinfo",
+                    "retentacle.auth.fetch_userinfo",
                     return_value={"email": _ADMIN_EMAIL, "email_verified": False},
                 ),
                 TestClient(app) as client,
@@ -2804,12 +2825,12 @@ class TestOIDCLogin:
             _seed_oidc(store)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch("retentacle.auth.exchange_code", return_value="access-token"),
                 patch(
-                    "shelly_backup.auth.fetch_userinfo",
+                    "retentacle.auth.fetch_userinfo",
                     return_value={"email": "stranger@example.com"},
                 ),
                 TestClient(app) as client,
@@ -2832,12 +2853,12 @@ class TestOIDCLogin:
             _seed_oidc(store, auto_create_users=True)
             with (
                 patch(
-                    "shelly_backup.auth.discover_endpoints",
+                    "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("shelly_backup.auth.exchange_code", return_value="access-token"),
+                patch("retentacle.auth.exchange_code", return_value="access-token"),
                 patch(
-                    "shelly_backup.auth.fetch_userinfo",
+                    "retentacle.auth.fetch_userinfo",
                     return_value={"email": "newcomer@example.com"},
                 ),
                 TestClient(app) as client,
@@ -2850,7 +2871,7 @@ class TestOIDCLogin:
                 )
 
                 assert response.status_code == 303
-                assert "shelly_backup_session=" in response.headers["set-cookie"]
+                assert "retentacle_session=" in response.headers["set-cookie"]
                 user = app.state.users.get_user_by_email("newcomer@example.com")
                 assert user is not None
                 assert user.role is UserRole.VIEWER

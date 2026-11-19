@@ -1054,7 +1054,6 @@ def _register_routes(
                 ),
                 "scheduler": scheduler,
                 "last_backup": store.latest_backup_time(),
-                "database_path": store.path,
             },
         )
 
@@ -1100,7 +1099,7 @@ def _register_routes(
         record = store.get(doc_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Backup not found")
-        filename = f"shelly-backup-{record.get('ip_address', 'device')}-{doc_id}.json"
+        filename = f"retentacle-{record.get('ip_address', 'device')}-{doc_id}.json"
         return JSONResponse(
             content=record,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -1116,7 +1115,7 @@ def create_app(
     scheduler: BackupScheduler | None = None,
     users: UserStore | None = None,
 ) -> FastAPI:
-    """Create the Shelly Backup web application."""
+    """Create the Retentacle web application."""
     configuration = configuration or Configuration()
     store = store or BackupStore(configuration.database_path())
     users = users or UserStore(configuration.users_path())
@@ -1150,7 +1149,7 @@ def create_app(
 
 
 def run_server(configuration: Configuration) -> None:
-    """Run the Shelly Backup web server."""
+    """Run the Retentacle web server."""
     uvicorn.run(
         create_app(configuration),
         host=configuration.host(),

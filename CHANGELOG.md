@@ -1,6 +1,9 @@
 # Changes
 
 ## 2026.5.0
+* Rename the application to Retentacle.
+* Show the tagline "Tentacles for your Shelly backups." under the name in the header.
+* Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
 * Add user management with admin and read-only roles.
 * Onboard the initial admin account through a first-run setup wizard.
 * Identify user accounts by email address instead of usernames.
@@ -11,7 +14,7 @@
 * Require a login for all pages except the health endpoint.
 * Let read-only users view and download backups without changing settings or running backups.
 * Manage user accounts, roles, passwords, and deletion from the settings page.
-* Store user accounts and login sessions in a separate `shelly_backup_users.json` database with hashed passwords.
+* Store user accounts and login sessions in a separate `retentacle_users.json` database with hashed passwords.
 * Run as a long-running server with scheduled backups.
 * Add a web UI for browsing backups per device and viewing raw backup data.
 * Add a manual per-device backup action on the device detail page.

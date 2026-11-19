@@ -6,7 +6,7 @@ import tempfile
 import pytest
 from tinydb import TinyDB
 
-from shelly_backup.users import (
+from retentacle.users import (
     User,
     UserRole,
     UserStore,

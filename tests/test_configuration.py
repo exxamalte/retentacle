@@ -6,7 +6,7 @@ import tempfile
 import pytest
 import yaml
 
-from shelly_backup.configuration import Configuration
+from retentacle.configuration import Configuration
 
 
 class TestConfiguration:
@@ -111,13 +111,13 @@ class TestConfiguration:
         """Test database path is inside the target folder."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = Configuration(None, tmpdir, None)
-            assert config.database_path() == Path(tmpdir) / "shelly_backup.json"
+            assert config.database_path() == Path(tmpdir) / "retentacle.json"
 
     def test_users_path(self):
         """Test user database path is inside the target folder."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = Configuration(None, tmpdir, None)
-            assert config.users_path() == Path(tmpdir) / "shelly_backup_users.json"
+            assert config.users_path() == Path(tmpdir) / "retentacle_users.json"
 
     def test_interval_default(self):
         """Test interval defaults to one hour."""

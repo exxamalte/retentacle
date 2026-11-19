@@ -1,14 +1,14 @@
-"""Shelly Backup CLI tool."""
+"""Retentacle CLI tool."""
 
 import argparse
 import importlib.metadata
 import logging
 
 # Must use absolute imports in this file.
-from shelly_backup.backup import Backup
-from shelly_backup.configuration import Configuration
-from shelly_backup.consts import APPLICATION_NAME
-from shelly_backup.server import run_server
+from retentacle.backup import Backup
+from retentacle.configuration import Configuration
+from retentacle.consts import APPLICATION_NAME
+from retentacle.server import run_server
 
 
 def _create_parser() -> argparse.ArgumentParser:
@@ -69,13 +69,13 @@ def _create_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Shelly Backup CLI tool."""
+    """Retentacle CLI tool."""
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     logger.info(
         "%s started (version %s)...",
         APPLICATION_NAME,
-        importlib.metadata.version("shelly_backup"),
+        importlib.metadata.version("retentacle"),
     )
     args = _create_parser().parse_args(argv)
     try:

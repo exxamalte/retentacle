@@ -3,15 +3,15 @@
 import runpy
 from unittest.mock import Mock, patch
 
-from shelly_backup import cli
+from retentacle import cli
 
 
 class TestCLI:
     """Test CLI module."""
 
-    @patch("shelly_backup.cli.run_server")
-    @patch("shelly_backup.cli.Backup")
-    @patch("shelly_backup.cli.Configuration")
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
     def test_main_starts_server_by_default(
         self, mock_configuration, mock_backup, mock_run_server
     ):
@@ -27,9 +27,9 @@ class TestCLI:
         mock_run_server.assert_called_once_with(configuration)
         mock_backup.assert_not_called()
 
-    @patch("shelly_backup.cli.run_server")
-    @patch("shelly_backup.cli.Backup")
-    @patch("shelly_backup.cli.Configuration")
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
     def test_main_once_runs_single_backup(
         self, mock_configuration, mock_backup, mock_run_server
     ):
@@ -46,9 +46,9 @@ class TestCLI:
         mock_backup.return_value.execute.assert_called_once_with()
         mock_run_server.assert_not_called()
 
-    @patch("shelly_backup.cli.run_server")
-    @patch("shelly_backup.cli.Backup")
-    @patch("shelly_backup.cli.Configuration")
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
     def test_main_passes_server_options(
         self, mock_configuration, mock_backup, mock_run_server
     ):
@@ -70,9 +70,9 @@ class TestCLI:
         mock_run_server.assert_called_once_with(configuration)
         mock_backup.assert_not_called()
 
-    @patch("shelly_backup.cli.run_server")
-    @patch("shelly_backup.cli.Backup")
-    @patch("shelly_backup.cli.Configuration")
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
     def test_main_with_configuration_file(
         self, mock_configuration, mock_backup, mock_run_server
     ):
@@ -88,9 +88,9 @@ class TestCLI:
         mock_backup.return_value.execute.assert_called_once_with()
         mock_run_server.assert_not_called()
 
-    @patch("shelly_backup.cli.run_server")
-    @patch("shelly_backup.cli.Backup")
-    @patch("shelly_backup.cli.Configuration")
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
     def test_main_os_error_handling(
         self, mock_configuration, mock_backup, mock_run_server
     ):
@@ -103,9 +103,9 @@ class TestCLI:
         mock_backup.assert_not_called()
         mock_run_server.assert_not_called()
 
-    @patch("shelly_backup.cli.run_server")
-    @patch("shelly_backup.cli.Backup")
-    @patch("shelly_backup.cli.Configuration")
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
     def test_main_value_error_handling(
         self, mock_configuration, mock_backup, mock_run_server
     ):
@@ -118,9 +118,9 @@ class TestCLI:
         mock_backup.assert_not_called()
         mock_run_server.assert_not_called()
 
-    @patch("shelly_backup.cli.run_server")
-    @patch("shelly_backup.cli.Backup")
-    @patch("shelly_backup.cli.Configuration")
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
     def test_main_handles_server_error(
         self, mock_configuration, mock_backup, mock_run_server
     ):
@@ -132,9 +132,9 @@ class TestCLI:
 
         mock_backup.assert_not_called()
 
-    @patch("shelly_backup.cli.main")
+    @patch("retentacle.cli.main")
     def test_python_m_entry_point(self, mock_main):
-        """Test that python -m shelly_backup calls the CLI."""
-        runpy.run_module("shelly_backup", run_name="__main__")
+        """Test that python -m retentacle calls the CLI."""
+        runpy.run_module("retentacle", run_name="__main__")
 
         mock_main.assert_called_once_with()
