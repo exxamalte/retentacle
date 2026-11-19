@@ -17,6 +17,7 @@ from .oidc import (
     discover_endpoints,
     exchange_code,
     fetch_userinfo,
+    id_token_picture,
     oidc_config_from_settings,
 )
 from .storage import BackupStore
@@ -257,19 +258,25 @@ async def _oidc_verified_email(
 
     Identity is anchored on the userinfo endpoint: the access token was just
     exchanged at the provider's own token endpoint, so a successful userinfo
-    call proves the profile belongs to the authenticated user.
+    call proves the profile belongs to the authenticated user. Providers that
+    do not put the ``picture`` claim into their userinfo response (for example
+    when the needed scope is not granted) are covered by the ID token fallback.
     """
     endpoints = await asyncio.to_thread(discover_endpoints, config.issuer)
-    access_token = await asyncio.to_thread(
+    tokens = await asyncio.to_thread(
         exchange_code, config, endpoints, code, redirect_uri
     )
+    access_token = str(tokens["access_token"])
     profile = await asyncio.to_thread(fetch_userinfo, endpoints, access_token)
     if profile.get("email_verified") is False:
         raise ValueError("The email address of your OIDC account is not verified.")
     email = str(profile.get("email") or "").strip()
     if not email:
         raise ValueError("The OIDC profile did not include an email address.")
-    return email, profile.get("picture")
+    picture = profile.get("picture")
+    if not picture:
+        picture = id_token_picture(tokens.get("id_token"), email)
+    return email, picture
 
 
 def _oidc_local_user(users: UserStore, config: OIDCConfig, email: str) -> User | None:

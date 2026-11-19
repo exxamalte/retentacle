@@ -1,5 +1,7 @@
 """Tests for the OpenID Connect client module."""
 
+import base64
+import json
 from unittest.mock import Mock, patch
 
 import httpx
@@ -14,6 +16,7 @@ from retentacle.oidc import (
     discover_endpoints,
     exchange_code,
     fetch_userinfo,
+    id_token_picture,
     oidc_config_from_settings,
 )
 
@@ -201,9 +204,11 @@ class TestTokenExchange:
         with patch(
             "httpx.post", return_value=_response({"access_token": "token-1"})
         ) as post:
-            token = exchange_code(self._config, _DISCOVERY, "code-1", "https://app/cb")
+            payload = exchange_code(
+                self._config, _DISCOVERY, "code-1", "https://app/cb"
+            )
 
-            assert token == "token-1"
+            assert payload["access_token"] == "token-1"
             sent = post.call_args.kwargs["data"]
             assert sent["grant_type"] == "authorization_code"
             assert sent["code"] == "code-1"
@@ -258,3 +263,49 @@ class TestTokenExchange:
             pytest.raises(OIDCError, match="not an object"),
         ):
             fetch_userinfo(_DISCOVERY, "token-1")
+
+
+class TestIdTokenPicture:
+    """Tests for the ID token picture claim fallback."""
+
+    @staticmethod
+    def _jwt(claims):
+        segment = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode()
+        return f"header.{segment.rstrip('=')}.signature"
+
+    def test_matching_email(self):
+        """Test that a token for the same account provides the picture."""
+        token = self._jwt(
+            {"email": "User@Example.com", "picture": "https://cdn.example/p.png"}
+        )
+
+        assert (
+            id_token_picture(token, "user@example.com") == "https://cdn.example/p.png"
+        )
+
+    def test_token_without_email_claim(self):
+        """Test that tokens without an email claim are accepted."""
+        token = self._jwt({"sub": "abc", "picture": "https://cdn.example/p.png"})
+
+        assert (
+            id_token_picture(token, "user@example.com") == "https://cdn.example/p.png"
+        )
+
+    def test_different_email_rejected(self):
+        """Test that pictures from tokens of other accounts are dropped."""
+        token = self._jwt(
+            {"email": "other@example.com", "picture": "https://cdn.example/p.png"}
+        )
+
+        assert id_token_picture(token, "user@example.com") is None
+
+    def test_token_without_picture(self):
+        """Test that tokens without a picture claim yield None."""
+        token = self._jwt({"email": "user@example.com"})
+
+        assert id_token_picture(token, "user@example.com") is None
+
+    def test_malformed_tokens_yield_none(self):
+        """Test that broken tokens fail gracefully."""
+        for value in (None, 17, "not-a-jwt", "a..b", "a.!!!.c", "a.e30=xyz.b"):
+            assert id_token_picture(value, "user@example.com") is None

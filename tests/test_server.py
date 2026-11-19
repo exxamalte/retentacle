@@ -1,5 +1,6 @@
 """Tests for the web server module."""
 
+import base64
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 import json
@@ -2313,6 +2314,12 @@ def _seed_oidc(store, **overrides):
     return oidc
 
 
+def _jwt(claims):
+    """Build an unsigned three-part JWT carrying the given payload claims."""
+    segment = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode()
+    return f"header.{segment.rstrip('=')}.signature"
+
+
 def _oidc_login_state(client):
     """Run the OIDC login start and return the state from the provider URL."""
     response = client.get("/oidc/login", follow_redirects=False)
@@ -2679,7 +2686,10 @@ class TestOIDCLogin:
                     "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("retentacle.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "access-token"},
+                ),
                 patch(
                     "retentacle.auth.fetch_userinfo",
                     return_value={
@@ -2725,7 +2735,10 @@ class TestOIDCLogin:
                     "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("retentacle.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "access-token"},
+                ),
                 patch(
                     "retentacle.auth.fetch_userinfo",
                     return_value={"email": _ADMIN_EMAIL, "email_verified": True},
@@ -2802,7 +2815,10 @@ class TestOIDCLogin:
                     "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("retentacle.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "access-token"},
+                ),
                 patch(
                     "retentacle.auth.fetch_userinfo",
                     return_value={"sub": "abc"},
@@ -2827,7 +2843,10 @@ class TestOIDCLogin:
                     "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("retentacle.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "access-token"},
+                ),
                 patch(
                     "retentacle.auth.fetch_userinfo",
                     return_value={"email": _ADMIN_EMAIL, "email_verified": False},
@@ -2852,7 +2871,10 @@ class TestOIDCLogin:
                     "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("retentacle.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "access-token"},
+                ),
                 patch(
                     "retentacle.auth.fetch_userinfo",
                     return_value={"email": "stranger@example.com"},
@@ -2880,7 +2902,10 @@ class TestOIDCLogin:
                     "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("retentacle.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "access-token"},
+                ),
                 patch(
                     "retentacle.auth.fetch_userinfo",
                     return_value={"email": "newcomer@example.com"},
@@ -2953,7 +2978,10 @@ class TestUserMenu:
                     "retentacle.auth.discover_endpoints",
                     return_value=dict(_OIDC_ENDPOINTS),
                 ),
-                patch("retentacle.auth.exchange_code", return_value="access-token"),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "access-token"},
+                ),
                 patch(
                     "retentacle.auth.fetch_userinfo",
                     return_value={
@@ -2973,3 +3001,73 @@ class TestUserMenu:
                 text = client.get("/").text
                 assert f'src="{picture}"' in text
                 assert ">A</span>" not in text
+
+    def test_avatar_falls_back_to_id_token_picture(self):
+        """Test providers that only send picture in the ID token work."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            id_token = _jwt(
+                {
+                    "email": _ADMIN_EMAIL,
+                    "picture": "https://cdn.example/alice.png",
+                }
+            )
+            with (
+                patch(
+                    "retentacle.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "at", "id_token": id_token},
+                ),
+                patch(
+                    "retentacle.auth.fetch_userinfo",
+                    return_value={"email": _ADMIN_EMAIL, "email_verified": True},
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                client.get("/oidc/callback", params={"code": "c", "state": state})
+
+                assert app.state.users.get_user_by_email(_ADMIN_EMAIL).picture == (
+                    "https://cdn.example/alice.png"
+                )
+                assert 'src="https://cdn.example/alice.png"' in client.get("/").text
+
+    def test_avatar_ignores_id_token_for_other_accounts(self):
+        """Test an ID token picture is dropped when the email differs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            id_token = _jwt(
+                {
+                    "email": "someone-else@example.com",
+                    "picture": "https://cdn.example/other.png",
+                }
+            )
+            with (
+                patch(
+                    "retentacle.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                patch(
+                    "retentacle.auth.exchange_code",
+                    return_value={"access_token": "at", "id_token": id_token},
+                ),
+                patch(
+                    "retentacle.auth.fetch_userinfo",
+                    return_value={"email": _ADMIN_EMAIL, "email_verified": True},
+                ),
+                TestClient(app) as client,
+            ):
+                _, state = _oidc_login_state(client)
+                response = client.get(
+                    "/oidc/callback",
+                    params={"code": "c", "state": state},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert app.state.users.get_user_by_email(_ADMIN_EMAIL).picture is None

@@ -5,7 +5,9 @@ endpoint with the exchanged access token. This delegates token validation
 to the provider and keeps the app free of extra cryptographic dependencies.
 """
 
+import base64
 from dataclasses import dataclass
+import json
 import threading
 import time
 from urllib.parse import urlencode
@@ -136,8 +138,8 @@ def exchange_code(
     endpoints: dict[str, str],
     code: str,
     redirect_uri: str,
-) -> str:
-    """Exchange an authorization code and return the provider access token."""
+) -> dict:
+    """Exchange an authorization code and return the provider token payload."""
     try:
         response = httpx.post(
             endpoints["token_endpoint"],
@@ -168,7 +170,35 @@ def exchange_code(
     access_token = payload.get("access_token")
     if not isinstance(access_token, str) or not access_token:
         raise OIDCError("The OIDC token response did not include an access token.")
-    return access_token
+    return payload
+
+
+def id_token_picture(id_token: object, email: str) -> str | None:
+    """Return the ``picture`` claim of an ID token for the given email.
+
+    The token is read directly from the provider's token endpoint response,
+    so it is trusted as a display hint only: identity stays anchored on the
+    verified userinfo email, and a token for a different account is ignored.
+    Malformed tokens simply yield None.
+    """
+    if not isinstance(id_token, str):
+        return None
+    parts = id_token.split(".")
+    if len(parts) != 3:
+        return None
+    segment = parts[1]
+    segment += "=" * (-len(segment) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(segment))
+    except ValueError, UnicodeDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    token_email = str(payload.get("email") or "").strip().casefold()
+    if token_email and token_email != email.strip().casefold():
+        return None
+    picture = payload.get("picture")
+    return picture if isinstance(picture, str) and picture else None
 
 
 def fetch_userinfo(endpoints: dict[str, str], access_token: str) -> dict:
