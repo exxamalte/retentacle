@@ -1,0 +1,28 @@
+# Exclude everything the image build does not need. The package itself and
+# its packaging inputs (see Dockerfile) are copied explicitly.
+.git
+.github
+.idea
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+venv/
+build/
+dist/
+*.egg-info/
+temp/
+tests/
+data/
+
+# Local files that must never end up in an image.
+.DS_Store
+configuration.yaml
+retentacle_backups.json
+retentacle_settings.json
+retentacle_users.json
+PLAN.md
+CHANGELOG.md
+docker-compose.yml
+Dockerfile
+.dockerignore
