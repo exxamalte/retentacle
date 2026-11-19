@@ -612,6 +612,16 @@
       font-size: 0.8rem;
     }
 
+    .site-disclaimer {
+      max-width: 46rem;
+      margin: 3rem auto 0;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-align: center;
+    }
+
     .backup-progress {
       margin: 0 0 1.25rem;
       padding: 0.9rem 1rem;
@@ -760,6 +770,11 @@
       </div>
     {% endif %}
     {% block content %}{% endblock %}
+    <p class="site-disclaimer">
+      {{ application_name }} is an independent open-source project and is not
+      associated with or endorsed by Shelly Europe Ltd. Shelly is a trademark
+      of its respective owner.
+    </p>
   </main>
   {% if request.state.user %}
     <script>

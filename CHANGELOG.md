@@ -3,6 +3,7 @@
 ## 2026.5.0
 * Rename the application to Retentacle.
 * Show the tagline "Tentacles for your Shelly backups." under the name in the header.
+* Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
 * Add user management with admin and read-only roles.
 * Onboard the initial admin account through a first-run setup wizard.
 * Identify user accounts by email address instead of usernames.

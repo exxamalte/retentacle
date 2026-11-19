@@ -232,6 +232,27 @@ class TestServer:
         assert "192.168.1.11" in response.text
         assert "View backups" in response.text
 
+    def test_page_footer_shows_trademark_disclaimer(self):
+        """Test every page ends with the trademark disclaimer, not the DB path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                response = client.get("/")
+
+        text = " ".join(response.text.split())
+        assert "not associated with or endorsed by Shelly Europe Ltd" in text
+        assert "retentacle.json" not in text
+
+    def test_login_page_shows_disclaimer(self):
+        """Test the disclaimer is visible before signing in."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.get("/login")
+
+        text = " ".join(response.text.split())
+        assert "Shelly is a trademark of its respective owner" in text
+
     def test_index_shows_device_backup_indicators(self):
         """Test the overview shows automatic and recent backup indicators."""
         now = datetime.now(UTC)

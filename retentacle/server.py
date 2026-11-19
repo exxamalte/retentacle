@@ -1054,7 +1054,6 @@ def _register_routes(
                 ),
                 "scheduler": scheduler,
                 "last_backup": store.latest_backup_time(),
-                "database_path": store.path,
             },
         )
 
