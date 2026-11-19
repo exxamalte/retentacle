@@ -111,7 +111,13 @@ class TestConfiguration:
         """Test database path is inside the target folder."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = Configuration(None, tmpdir, None)
-            assert config.database_path() == Path(tmpdir) / "retentacle.json"
+            assert config.database_path() == Path(tmpdir) / "retentacle_backups.json"
+
+    def test_settings_path(self):
+        """Test settings database path is inside the target folder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            assert config.settings_path() == Path(tmpdir) / "retentacle_settings.json"
 
     def test_users_path(self):
         """Test user database path is inside the target folder."""

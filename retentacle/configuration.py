@@ -10,6 +10,7 @@ from .consts import (
     DEFAULT_HOST,
     DEFAULT_INTERVAL,
     DEFAULT_PORT,
+    SETTINGS_FILENAME,
     USERS_FILENAME,
 )
 
@@ -92,6 +93,10 @@ class Configuration:
     def database_path(self) -> Path:
         """Get the path to the backup database."""
         return self.target_folder() / DATABASE_FILENAME
+
+    def settings_path(self) -> Path:
+        """Get the path to the application settings database."""
+        return self.target_folder() / SETTINGS_FILENAME
 
     def users_path(self) -> Path:
         """Get the path to the user account database."""

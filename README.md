@@ -38,36 +38,35 @@ pip install -e ".[tests]"
 
 ## Running the server
 
-Start the server with one or more device IP addresses:
+Start the server:
 
 ```commandline
-retentacle --ip-address 192.168.10.20
+retentacle
 ```
 
 Alternatively, run it as a Python module:
 
 ```commandline
-python -m retentacle --ip-address 192.168.10.20
+python -m retentacle
 ```
 
 By default the web server listens on `http://127.0.0.1:8080` and runs a backup
 every hour. Open that address in a browser for the first time to create the
-initial admin account, then sign in to see the devices overview. The
-first backup starts immediately after startup; subsequent backups run at the
-configured interval.
-
-You can also start the server without specifying device IP addresses and add
-them later on the Settings page.
+initial admin account, then sign in and add your device IP addresses on the
+**Settings** page. Alternatively, list devices under `ip_addresses` in a
+configuration file. The first backup starts immediately after startup;
+subsequent backups run at the configured interval.
 
 ### Server options
 
+Devices and the backup interval are configured in the web UI (or a
+configuration file); the remaining startup options are command line flags:
+
 | Option | Description |
 | --- | --- |
-| `--ip-address` | IP address of a Shelly device. Repeat by using a configuration file for multiple devices. |
 | `--discover` | Auto-discover Shelly devices via mDNS. |
-| `--target-folder` | Folder where the TinyDB database is stored. Defaults to the current folder. |
+| `--target-folder` | Folder where the TinyDB databases are stored. Defaults to the current folder. |
 | `--configuration` | YAML configuration file. |
-| `--interval` | Interval between automatic backups, for example `30m`, `1h`, or `1d`. Plain seconds are also accepted. Use `0` to disable automatic backups. |
 | `--host` | Host the web server binds to. Defaults to `127.0.0.1`. |
 | `--port` | Port the web server listens on. Defaults to `8080`. |
 | `--once` | Run a single backup and exit instead of starting the server. |
@@ -136,11 +135,11 @@ users sign in through an external identity provider:
   refused.
 
 Note that the OIDC **client secret is stored in the settings database**
-(`retentacle.json`) as part of the web settings, so keep the target folder
-protected. If you disable password sign-in and your provider becomes
-unreachable, you can re-enable it by editing the settings file: remove the
-`oidc` entry (or set `disable_password_login` to `false`) in the `settings`
-document and restart the server.
+(`retentacle_settings.json`) as part of the web settings, so keep the target
+folder protected. If you disable password sign-in and your provider becomes
+unreachable, you can re-enable it by deleting `retentacle_settings.json` (or
+removing the `oidc` entry from its `settings` document) and restarting the
+server — your device backups remain untouched.
 
 ### Web UI
 
@@ -184,10 +183,9 @@ The **Settings** page lets you turn automatic backups on or off, choose the
 date and time of the next run, and select how often backups repeat. It also lets
 you add or remove device IP addresses while the server is running. Devices added
 there are used for scheduled and manual backups and take precedence over the
-configuration file and `--ip-address`. Changes take effect immediately and are
-stored in the TinyDB database, so they survive a restart. Settings saved in the
-web UI take precedence over both the configuration file and command line
-options.
+configuration file. Changes take effect immediately and are stored in the
+settings database, so they survive a restart. Settings saved in the web UI
+take precedence over the configuration file.
 
 The Settings page also configures backup retention separately for each device.
 It keeps the newest backup from each month, week, day, and hour, and removes
@@ -198,17 +196,22 @@ must remain above zero.
 
 ## One-shot backup
 
-To run a single backup and exit, use `--once`:
+To run a single backup and exit, use `--once` together with a configuration
+file that lists `ip_addresses` (or with `--discover`):
 
 ```commandline
-retentacle --once --ip-address 192.168.10.20
+retentacle --once --configuration configuration.yaml
 ```
 
-The database is stored in the current folder as `retentacle.json` unless a
+```commandline
+retentacle --once --discover
+```
+
+Backups are stored in the current folder as `retentacle_backups.json` unless a
 different folder is specified:
 
 ```commandline
-retentacle --once --ip-address 192.168.10.20 --target-folder backup_folder
+retentacle --once --configuration configuration.yaml --target-folder backup_folder
 ```
 
 ## Auto-discovery
@@ -267,13 +270,17 @@ saved in the web UI take precedence over both.
 
 ## Database
 
-Backups are stored in a TinyDB database named `retentacle.json` inside the
-target folder. Each record contains the device IP address, a timestamp, the
+Device backups are stored in a TinyDB database named `retentacle_backups.json` inside
+the target folder. Each record contains the device IP address, a timestamp, the
 device generation, basic device information, and the fetched configuration.
+
+Application settings — the backup schedule, devices, retention policy, and
+single sign-on configuration managed on the Settings page — live in a separate
+database named `retentacle_settings.json`, so they can be reset or repaired
+without touching any backups.
 
 User accounts and login sessions are stored in a separate TinyDB database
 named `retentacle_users.json` in the same folder. Accounts are keyed by
 email address, passwords are stored as salted PBKDF2 hashes and session
 tokens only appear as salted hashes. The OpenID Connect client secret lives
-in the settings document of `retentacle.json`, so protect the target
-folder accordingly.
+in `retentacle_settings.json`, so protect the target folder accordingly.

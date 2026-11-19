@@ -15,12 +15,6 @@ def _create_parser() -> argparse.ArgumentParser:
     """Create the command line argument parser."""
     parser = argparse.ArgumentParser(description=APPLICATION_NAME)
     parser.add_argument(
-        "--ip-address",
-        dest="ip_address",
-        required=False,
-        help="IP address of the Shelly device",
-    )
-    parser.add_argument(
         "--target-folder",
         dest="target_folder",
         required=False,
@@ -45,12 +39,6 @@ def _create_parser() -> argparse.ArgumentParser:
         action="store_true",
         required=False,
         help="Run a single backup and exit instead of starting the web server",
-    )
-    parser.add_argument(
-        "--interval",
-        dest="interval",
-        required=False,
-        help="Interval between automatic backups, e.g. 30m, 1h, or 1d",
     )
     parser.add_argument(
         "--host",
@@ -79,13 +67,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = _create_parser().parse_args(argv)
     try:
-        # Set up configuration
+        # Set up configuration. Devices and the backup interval are managed
+        # on the web UI Settings page or in the configuration file.
         configuration = Configuration(
-            args.ip_address,
-            args.target_folder,
-            args.configuration_file,
-            args.discover,
-            interval=args.interval,
+            target_folder=args.target_folder,
+            configuration_file=args.configuration_file,
+            discover=args.discover,
             host=args.host,
             port=args.port,
         )

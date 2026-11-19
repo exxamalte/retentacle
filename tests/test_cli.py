@@ -3,7 +3,10 @@
 import runpy
 from unittest.mock import Mock, patch
 
+import pytest
+
 from retentacle import cli
+from retentacle.cli import _create_parser
 
 
 class TestCLI:
@@ -22,7 +25,11 @@ class TestCLI:
         cli.main([])
 
         mock_configuration.assert_called_once_with(
-            None, None, None, False, interval=None, host=None, port=None
+            target_folder=None,
+            configuration_file=None,
+            discover=False,
+            host=None,
+            port=None,
         )
         mock_run_server.assert_called_once_with(configuration)
         mock_backup.assert_not_called()
@@ -37,10 +44,14 @@ class TestCLI:
         configuration = Mock()
         mock_configuration.return_value = configuration
 
-        cli.main(["--once", "--ip-address", "192.168.1.1"])
+        cli.main(["--once", "--target-folder", "backups"])
 
         mock_configuration.assert_called_once_with(
-            "192.168.1.1", None, None, False, interval=None, host=None, port=None
+            target_folder="backups",
+            configuration_file=None,
+            discover=False,
+            host=None,
+            port=None,
         )
         mock_backup.assert_called_once_with(configuration)
         mock_backup.return_value.execute.assert_called_once_with()
@@ -52,18 +63,16 @@ class TestCLI:
     def test_main_passes_server_options(
         self, mock_configuration, mock_backup, mock_run_server
     ):
-        """Test that interval, host, and port are passed to the configuration."""
+        """Test that host and port are passed to the configuration."""
         configuration = Mock()
         mock_configuration.return_value = configuration
 
-        cli.main(["--interval", "30m", "--host", "0.0.0.0", "--port", "9000"])
+        cli.main(["--host", "0.0.0.0", "--port", "9000"])
 
         mock_configuration.assert_called_once_with(
-            None,
-            None,
-            None,
-            False,
-            interval="30m",
+            target_folder=None,
+            configuration_file=None,
+            discover=False,
             host="0.0.0.0",
             port=9000,
         )
@@ -83,7 +92,11 @@ class TestCLI:
         cli.main(["--once", "--configuration", "config.yaml"])
 
         mock_configuration.assert_called_once_with(
-            None, None, "config.yaml", False, interval=None, host=None, port=None
+            target_folder=None,
+            configuration_file="config.yaml",
+            discover=False,
+            host=None,
+            port=None,
         )
         mock_backup.return_value.execute.assert_called_once_with()
         mock_run_server.assert_not_called()
@@ -110,10 +123,10 @@ class TestCLI:
         self, mock_configuration, mock_backup, mock_run_server
     ):
         """Test main function handles invalid configuration values."""
-        mock_configuration.side_effect = ValueError("Invalid interval")
+        mock_configuration.side_effect = ValueError("Invalid configuration")
 
         # Should not raise exception
-        cli.main(["--once", "--interval", "nonsense"])
+        cli.main(["--once"])
 
         mock_backup.assert_not_called()
         mock_run_server.assert_not_called()
@@ -131,6 +144,13 @@ class TestCLI:
         cli.main([])
 
         mock_backup.assert_not_called()
+
+    def test_web_configured_options_are_rejected(self):
+        """Test that flags managed via the web UI were removed."""
+        parser = _create_parser()
+        for option in ("--ip-address", "--interval"):
+            with pytest.raises(SystemExit):
+                parser.parse_args([option, "example"])
 
     @patch("retentacle.cli.main")
     def test_python_m_entry_point(self, mock_main):

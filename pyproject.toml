@@ -27,7 +27,6 @@ dependencies = [
     "httpx",
     "jinja2",
     "PyYAML>=6.0.3",
-    "pyinstaller>=6.22.3",
     "tinydb>=4.9.0",
     "uvicorn",
     "zeroconf",

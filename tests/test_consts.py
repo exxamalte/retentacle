@@ -24,4 +24,5 @@ def test_server_defaults():
     assert consts.DEFAULT_INTERVAL == 3600
     assert consts.DEFAULT_HOST == "127.0.0.1"
     assert consts.DEFAULT_PORT == 8080
-    assert consts.DATABASE_FILENAME == "retentacle.json"
+    assert consts.DATABASE_FILENAME == "retentacle_backups.json"
+    assert consts.SETTINGS_FILENAME == "retentacle_settings.json"
