@@ -113,6 +113,19 @@
       text-decoration: none;
     }
 
+    .brand-copy {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+    }
+
+    .brand-tagline {
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 550;
+      letter-spacing: 0;
+    }
+
     .brand-mark {
       display: grid;
       place-items: center;
@@ -700,7 +713,10 @@
     <div class="header-inner">
       <a class="brand" href="/">
         <span class="brand-mark" aria-hidden="true">RE</span>
-        <span class="brand-text">{{ application_name }}</span>
+        <span class="brand-copy">
+          <span class="brand-text">{{ application_name }}</span>
+          <span class="brand-tagline">{{ application_tagline }}</span>
+        </span>
       </a>
       {% set user = request.state.user %}
       <div class="header-actions">

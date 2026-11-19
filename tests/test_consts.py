@@ -8,6 +8,11 @@ def test_application_name():
     assert consts.APPLICATION_NAME == "Retentacle"
 
 
+def test_application_tagline():
+    """Test application tagline constant."""
+    assert consts.APPLICATION_TAGLINE == "Tentacles for your Shelly backups."
+
+
 def test_mdns_service_types():
     """Test mDNS service type constants."""
     assert consts.SHELLY_MDNS_SERVICE_TYPE == "_shelly._tcp.local."
