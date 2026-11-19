@@ -1,7 +1,7 @@
 # Retentacle
 
-[![Build Status](https://github.com/exxamalte/shelly-backup/actions/workflows/tests.yml/badge.svg)](https://github.com/exxamalte/shelly-backup/actions/workflows/tests.yml)
-[![codecov](https://codecov.io/gh/exxamalte/shelly-backup/graph/badge.svg?token=47OELOAUP4)](https://codecov.io/gh/exxamalte/shelly-backup)
+[![Build Status](https://github.com/exxamalte/retentacle/actions/workflows/tests.yml/badge.svg)](https://github.com/exxamalte/retentacle/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/exxamalte/retentacle/graph/badge.svg?token=47OELOAUP4)](https://codecov.io/gh/exxamalte/retentacle)
 
 Retentacle is a long-running backup server and command line tool for Shelly
 devices. It fetches
