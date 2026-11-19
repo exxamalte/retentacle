@@ -8,6 +8,7 @@ from typing import Any
 
 from tinydb import TinyDB
 
+from .consts import SETTINGS_FILENAME
 from .retention import RetentionPolicy, select_expired_doc_ids
 
 BackupRecord = dict[str, Any]
@@ -88,23 +89,38 @@ def _ip_sort_key(value: str) -> tuple[int, int, bytes]:
 
 
 class BackupStore:
-    """Persistent storage for Shelly device backups."""
+    """Persistent storage for Shelly device backups and application settings.
 
-    def __init__(self, path: Path | str):
+    Backups live in the TinyDB database at ``path``; settings live in a
+    separate file (``settings_path``, by default ``retentacle_settings.json``
+    next to the database) so they can be reset without touching backups.
+    """
+
+    def __init__(self, path: Path | str, settings_path: Path | str | None = None):
         """Initialise the store."""
         self._path = Path(path)
+        self._settings_path = (
+            Path(settings_path)
+            if settings_path is not None
+            else self._path.with_name(SETTINGS_FILENAME)
+        )
 
     @property
     def path(self) -> Path:
-        """Get the path to the TinyDB database."""
+        """Get the path to the backup database."""
         return self._path
+
+    @property
+    def settings_path(self) -> Path:
+        """Get the path to the settings database."""
+        return self._settings_path
 
     def get_settings(self) -> dict[str, Any]:
         """Return persisted application settings."""
         with _LOCK:
-            if not self._path.exists():
+            if not self._settings_path.exists():
                 return {}
-            db = TinyDB(self._path)
+            db = TinyDB(self._settings_path)
             try:
                 document = db.table(_SETTINGS_TABLE).get(doc_id=_SETTINGS_DOC_ID)
             finally:
@@ -114,8 +130,8 @@ class BackupStore:
     def save_settings(self, settings: dict[str, Any]) -> None:
         """Persist application settings, replacing previously saved values."""
         with _LOCK:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            db = TinyDB(self._path)
+            self._settings_path.parent.mkdir(parents=True, exist_ok=True)
+            db = TinyDB(self._settings_path)
             try:
                 table = db.table(_SETTINGS_TABLE)
                 table.truncate()

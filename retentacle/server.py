@@ -436,6 +436,7 @@ def _scheduler_status(scheduler: BackupScheduler, store: BackupStore) -> dict:
         "next_run": scheduler.next_run.isoformat() if scheduler.next_run else None,
         "run_count": scheduler.run_count,
         "database": str(store.path),
+        "settings": str(store.settings_path),
         "devices": len(store.devices()),
     }
 
@@ -1117,7 +1118,9 @@ def create_app(
 ) -> FastAPI:
     """Create the Retentacle web application."""
     configuration = configuration or Configuration()
-    store = store or BackupStore(configuration.database_path())
+    store = store or BackupStore(
+        configuration.database_path(), configuration.settings_path()
+    )
     users = users or UserStore(configuration.users_path())
     if scheduler is None:
         enabled, interval, next_run_at = _effective_schedule(configuration, store)

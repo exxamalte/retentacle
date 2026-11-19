@@ -4,6 +4,10 @@
 * Rename the application to Retentacle.
 * Show the tagline "Tentacles for your Shelly backups." under the name in the header.
 * Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
+* Remove the `--ip-address` and `--interval` command line options; configure devices and the backup schedule in the web UI or the configuration file.
+* Store web settings in a separate `retentacle_settings.json` database, so they can be reset without touching backups.
+* Name the backups database file `retentacle_backups.json`.
+* Stop building standalone executables; install the Python package instead.
 * Add user management with admin and read-only roles.
 * Onboard the initial admin account through a first-run setup wizard.
 * Identify user accounts by email address instead of usernames.

@@ -241,7 +241,7 @@ class TestServer:
 
         text = " ".join(response.text.split())
         assert "not associated with or endorsed by Shelly Europe Ltd" in text
-        assert "retentacle.json" not in text
+        assert "retentacle_backups.json" not in text
 
     def test_login_page_shows_disclaimer(self):
         """Test the disclaimer is visible before signing in."""
@@ -887,7 +887,7 @@ class TestServer:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["database"].endswith("retentacle.json")
+        assert data["database"].endswith("retentacle_backups.json")
         assert data["devices"] == 1
         assert data["last_run"] is None
 
