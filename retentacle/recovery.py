@@ -115,9 +115,17 @@ def _section_label(key: object) -> str:
     return f"{label} {index}" if index else label
 
 
-def _is_secret(path: str) -> bool:
-    """Whether the last path segment looks like a credential."""
-    return bool(_SECRET_PATTERN.search(path.rsplit(".", 1)[-1]))
+def _is_sensitive(path: str, value: object) -> bool:
+    """Whether a leaf value looks like a credential worth masking.
+
+    Only non-empty strings under sensitive names are masked — booleans or
+    numbers such as ``mqtt.use_client_cert`` are settings, not secrets.
+    """
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and bool(_SECRET_PATTERN.search(path.rsplit(".", 1)[-1]))
+    )
 
 
 def _display_value(value: object) -> str | None:
@@ -155,7 +163,7 @@ def _groups(config: dict) -> list[ConfigGroup]:
             display = _display_value(leaf)
             if display is None:
                 continue
-            masked = _is_secret(path)
+            masked = _is_sensitive(path, leaf)
             items.append(
                 ConfigItem(
                     path=path,
@@ -324,7 +332,7 @@ class ConfigChange:
 
 def _leaf_value(value: object, path: str) -> str:
     """Return the display value for a diff leaf, masking secrets."""
-    if _is_secret(path):
+    if _is_sensitive(path, value):
         return "••••••••"
     display = _display_value(value)
     return "—" if display is None else display
@@ -335,7 +343,12 @@ def compare_configs(left: dict, right: dict) -> dict:
     leaves_left = dict(_flatten("", left))
     leaves_right = dict(_flatten("", right))
     added = [
-        ConfigItem(path, "", _leaf_value(leaves_right[path], path), _is_secret(path))
+        ConfigItem(
+            path,
+            "",
+            _leaf_value(leaves_right[path], path),
+            _is_sensitive(path, leaves_right[path]),
+        )
         for path in sorted(leaves_right.keys() - leaves_left.keys())
     ]
     removed = [
@@ -343,7 +356,7 @@ def compare_configs(left: dict, right: dict) -> dict:
             path,
             "",
             _leaf_value(leaves_left[path], path),
-            _is_secret(path),
+            _is_sensitive(path, leaves_left[path]),
         )
         for path in sorted(leaves_left.keys() - leaves_right.keys())
     ]
