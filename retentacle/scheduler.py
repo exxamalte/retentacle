@@ -137,10 +137,20 @@ class BackupScheduler:
         """Start the background scheduler."""
         if not self.enabled or self._task is not None:
             return
+        now = datetime.now(UTC)
         if self._next_run_at is None:
             # No explicitly configured next run: run once immediately and
             # schedule later runs from the completion time.
-            self._next_run_at = datetime.now(UTC)
+            self._next_run_at = now
+        elif self._next_run_at <= now:
+            # The scheduled time passed while the server was not running
+            # (crash, shutdown, sleep). Never show a next run in the past:
+            # run the missed backup now and reschedule from its completion.
+            _LOGGER.info(
+                "Backup was due at %s; catching up immediately",
+                self._next_run_at.isoformat(),
+            )
+            self._next_run_at = now
         self._task = asyncio.create_task(self._run_loop(), name="retentacle-scheduler")
 
     async def stop(self) -> None:
@@ -171,8 +181,14 @@ class BackupScheduler:
             self.progress_current = ip_address
             self.progress_results.append({"ip_address": ip_address, "success": success})
 
-    async def run_once(self, ip_addresses: list[str] | None = None) -> None:
-        """Run a backup once for the given or configured devices."""
+    async def run_once(
+        self, ip_addresses: list[str] | None = None, *, automatic: bool = False
+    ) -> None:
+        """Run a backup once for the given or configured devices.
+
+        ``automatic`` marks the stored records as scheduled-run backups; it
+        is set by the background loop only, never by manual UI triggers.
+        """
         async with self._lock:
             if self._pending_runs > 0:
                 self._pending_runs -= 1
@@ -188,6 +204,7 @@ class BackupScheduler:
                     ip_addresses,
                     self._on_start,
                     self._on_progress,
+                    automatic=automatic,
                 )
                 _LOGGER.info(
                     "Backup completed for %d device(s)", len(self.last_backed_up)
@@ -253,7 +270,7 @@ class BackupScheduler:
             if not self.enabled:
                 continue
             scheduled_next_run = self._next_run_at
-            await self.run_once()
+            await self.run_once(automatic=True)
             if not self.enabled or self._next_run_at != scheduled_next_run:
                 # The schedule changed while the backup was running. Keep the
                 # user's new next-run selection.

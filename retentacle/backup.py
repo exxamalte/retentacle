@@ -33,8 +33,14 @@ class Backup:
         ip_addresses: list[str] | None = None,
         on_start: StartCallback | None = None,
         on_progress: ProgressCallback | None = None,
+        *,
+        automatic: bool = False,
     ) -> list[str]:
-        """Run device backup for the given or configured devices."""
+        """Run device backup for the given or configured devices.
+
+        ``automatic`` marks the stored records as produced by a scheduled
+        run, so the web UI can tell them apart from manual backups.
+        """
         if ip_addresses is None:
             ip_addresses = self._configuration.ip_addresses()
             if not ip_addresses and self._configuration.discover():
@@ -51,23 +57,23 @@ class Backup:
             on_start(len(ip_addresses))
         backed_up: list[str] = []
         for ip_address in ip_addresses:
-            success = self.backup_device(ip_address)
+            success = self.backup_device(ip_address, automatic=automatic)
             if success:
                 backed_up.append(ip_address)
             if on_progress is not None:
                 on_progress(ip_address, success)
         return backed_up
 
-    def backup_device(self, ip_address: str) -> bool:
+    def backup_device(self, ip_address: str, *, automatic: bool = False) -> bool:
         """Back up a single device and return whether it succeeded."""
         try:
-            return self._device_backup(ip_address)
+            return self._device_backup(ip_address, automatic)
         except Exception:  # noqa: BLE001
             # A single failing device must not stop the remaining backups.
             _LOGGER.exception("Unexpected error backing up %s", ip_address)
             return False
 
-    def _device_backup(self, ip_address: str) -> bool:
+    def _device_backup(self, ip_address: str, automatic: bool = False) -> bool:
         """Create device backup from Shelly under provided IP address."""
         try:
             # Get some basic information from the device to determine which generation
@@ -81,9 +87,9 @@ class Backup:
                 _LOGGER.info("Device identified as generation %s", shelly_gen)
                 match shelly_gen:
                     case 1:
-                        return self._generation_1(ip_address, response_json)
+                        return self._generation_1(ip_address, response_json, automatic)
                     case 2 | 3:
-                        return self._generation_2(ip_address, response_json)
+                        return self._generation_2(ip_address, response_json, automatic)
                     case _:
                         # Unknown generation.
                         _LOGGER.warning("Unknown generation: %s", shelly_gen)
@@ -101,7 +107,12 @@ class Backup:
             _LOGGER.warning("Invalid response from %s - %s", ip_address, exc)
             return False
 
-    def _generation_1(self, ip_address: str, basic_device_information: dict) -> bool:
+    def _generation_1(
+        self,
+        ip_address: str,
+        basic_device_information: dict,
+        automatic: bool = False,
+    ) -> bool:
         """Backup generation 1 device."""
         urls: dict = {
             "settings": f"http://{ip_address}/settings",
@@ -109,9 +120,16 @@ class Backup:
             "status": f"http://{ip_address}/status",
         }
         configuration: dict = self._device_configuration(urls)
-        return self._store(ip_address, configuration, basic_device_information)
+        return self._store(
+            ip_address, configuration, basic_device_information, automatic
+        )
 
-    def _generation_2(self, ip_address: str, basic_device_information: dict) -> bool:
+    def _generation_2(
+        self,
+        ip_address: str,
+        basic_device_information: dict,
+        automatic: bool = False,
+    ) -> bool:
         """Backup generation 2 device."""
         urls: dict = {
             "configuration": f"http://{ip_address}/rpc/Shelly.GetConfig",
@@ -119,7 +137,9 @@ class Backup:
             "status": f"http://{ip_address}/rpc/Shelly.GetStatus",
         }
         configuration: dict = self._device_configuration(urls)
-        return self._store(ip_address, configuration, basic_device_information)
+        return self._store(
+            ip_address, configuration, basic_device_information, automatic
+        )
 
     def _device_configuration(self, urls: dict) -> dict:
         """Fetch device configuration from the provided list of URLs."""
@@ -142,6 +162,7 @@ class Backup:
         ip_address: str,
         device_settings: dict,
         device_info: dict | None = None,
+        automatic: bool = False,
     ) -> bool:
         """Store device settings and return whether storing succeeded."""
         device_info = device_info or {}
@@ -151,6 +172,7 @@ class Backup:
             "generation": device_info.get("gen", 1),
             "device_info": device_info,
             "settings": device_settings,
+            "automatic": bool(automatic),
         }
         try:
             self._backup_store.add(record)

@@ -200,24 +200,30 @@ class BackupStore:
             finally:
                 db.close()
 
-    def latest_backup_time(self) -> datetime | None:
-        """Return the timestamp of the most recent backup, if any."""
-        records = self.all()
-        if not records:
-            return None
-        value = records[0].get("timestamp")
-        if isinstance(value, datetime):
-            timestamp = value
-        elif isinstance(value, str):
-            try:
-                timestamp = datetime.fromisoformat(value)
-            except ValueError:
-                return None
-        else:
-            return None
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=UTC)
-        return timestamp
+    def latest_backup_time(self, *, automatic_only: bool = False) -> datetime | None:
+        """Return the timestamp of the most recent backup, if any.
+
+        With ``automatic_only`` records explicitly marked as manual backups
+        are skipped; older records without a trigger marker are treated as
+        automatic.
+        """
+        for record in self.all():
+            if automatic_only and record.get("automatic") is False:
+                continue
+            value = record.get("timestamp")
+            if isinstance(value, datetime):
+                timestamp = value
+            elif isinstance(value, str):
+                try:
+                    timestamp = datetime.fromisoformat(value)
+                except ValueError:
+                    continue
+            else:
+                continue
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=UTC)
+            return timestamp.astimezone(UTC)
+        return None
 
     def devices(self) -> list[dict[str, Any]]:
         """Return a summary of all devices that have backups."""
