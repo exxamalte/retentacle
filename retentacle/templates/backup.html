@@ -129,17 +129,23 @@
       <p class="field-help">
         The restorable settings of this backup, grouped by device section.
       </p>
-      {% for group in recovery.groups %}
-        <div class="config-group">
-          <h3>{{ group.label }}</h3>
-          <div class="table-wrap">
-            <table>
-              <tbody>
-                {% for item in group.items %}
-                  <tr>
-                    <td class="mono">{{ item.path }}</td>
-                    <td class="mono">
-                      {{ item.value }}
+      <div class="table-wrap">
+        <table class="config-table">
+          <colgroup>
+            <col class="config-path-col">
+            <col class="config-value-col">
+          </colgroup>
+          <tbody>
+            {% for group in recovery.groups %}
+              <tr class="config-group-row">
+                <th colspan="2" scope="colgroup">{{ group.label }}</th>
+              </tr>
+              {% for item in group.items %}
+                <tr>
+                  <td class="mono config-path">{{ item.path }}</td>
+                  <td>
+                    <div class="config-value">
+                      <span class="mono">{{ item.value }}</span>
                       {% if item.masked %}
                         <span class="badge muted" title="Included in the restore payload">in payload</span>
                       {% else %}
@@ -151,14 +157,14 @@
                           aria-label="Copy value for {{ item.path }}"
                         >⧉</button>
                       {% endif %}
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {% endfor %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </section>
   {% endif %}
 

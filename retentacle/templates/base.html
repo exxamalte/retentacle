@@ -749,14 +749,38 @@
       font-size: 0.92rem;
     }
 
-    .config-group {
-      margin-top: 1.35rem;
+    .config-table {
+      table-layout: fixed;
     }
 
-    .config-group h3 {
-      margin: 0 0 0.45rem;
-      font-size: 0.95rem;
-      letter-spacing: -0.01em;
+    .config-path-col {
+      width: 34%;
+    }
+
+    .config-table td {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      vertical-align: top;
+    }
+
+    .config-path {
+      color: var(--muted);
+    }
+
+    .config-group-row th {
+      background: var(--surface-muted);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: normal;
+      text-transform: none;
+    }
+
+    .config-value {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
     }
 
     details.card summary {
