@@ -741,6 +741,83 @@
       margin-top: 1.25rem;
     }
 
+    .restore-steps {
+      display: grid;
+      gap: 0.3rem;
+      margin: 0 0 1.1rem;
+      padding-left: 1.4rem;
+      font-size: 0.92rem;
+    }
+
+    .config-table {
+      table-layout: fixed;
+    }
+
+    .config-path-col {
+      width: 34%;
+    }
+
+    .config-table td {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      vertical-align: top;
+    }
+
+    .config-path {
+      color: var(--muted);
+    }
+
+    .config-group-row th {
+      background: var(--surface-muted);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: normal;
+      text-transform: none;
+    }
+
+    .config-summary-cell .badge-list {
+      max-width: 34rem;
+    }
+
+    .diff-old {
+      color: var(--danger);
+    }
+
+    .diff-new {
+      color: var(--success);
+    }
+
+    .diff-table th {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .config-value {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    details.card summary {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      cursor: pointer;
+      font-weight: 650;
+      list-style: none;
+    }
+
+    details.card summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.card[open] summary {
+      margin-bottom: 0.85rem;
+    }
+
     pre {
       max-height: 70vh;
       margin: 0;

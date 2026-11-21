@@ -735,7 +735,7 @@ class TestServer:
         assert response.status_code == 200
         assert "Kitchen" in response.text
         assert "settings" in response.text
-        assert "Download JSON" in response.text
+        assert "Download full snapshot" in response.text
         assert "Raw backup data" in response.text
         assert "Backup ID" in response.text
         assert f"#{doc_id}" in response.text
@@ -3097,3 +3097,336 @@ class TestUserMenu:
 
                 assert response.status_code == 303
                 assert app.state.users.get_user_by_email(_ADMIN_EMAIL).picture is None
+
+
+class TestRecoveryView:
+    """Tests for the user-friendly backup and restore view."""
+
+    def _gen2_record(self):
+        return {
+            "ip_address": "192.168.10.20",
+            "timestamp": "2026-11-15T10:00:00+00:00",
+            "generation": 2,
+            "device_info": {
+                "gen": 2,
+                "model": "Plus1PM",
+                "mac": "AC:12:3F:11:22:33",
+                "fw": "20260101-120000/v1",
+            },
+            "settings": {
+                "configuration": {
+                    "sys": {"device": {"name": "Kitchen"}},
+                    "wifi": {"sta": {"ssid": "HomeNet", "psk": "super-wifi-pass"}},
+                    "mqtt": {"enable": True, "password": "super-mqtt-pass"},
+                },
+                "device_info": {"mac": "AC:12:3F:11:22:33", "uptime": 400},
+                "status": {"switch:0": {"output": True, "power": 12.4}},
+            },
+        }
+
+    def test_backup_page_shows_restore_sections(self):
+        """Test the backup page groups config, masks secrets and flags state."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                text = client.get(f"/backups/{doc_id}").text
+
+        assert "Manual restore" in text
+        assert "Shelly.SetConfig" in text
+        assert "restore-192.168.10.20-" in text
+        assert "Copy restore JSON" in text
+        assert 'id="restore-payload"' in text
+        assert "Wi-Fi" in text
+        summary = text.split('aria-label="Configuration summary"')[1].split(
+            "</section>"
+        )[0]
+        assert "super-wifi-pass" not in summary
+        assert "super-mqtt-pass" not in summary
+        assert "••••••••" in summary
+        assert "never restored" in text
+
+    def test_backup_page_shows_identity_info(self):
+        """Test model, MAC and firmware are surfaced as information only."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                text = client.get(f"/backups/{doc_id}").text
+
+        assert "Plus1PM" in text
+        assert "AC:12:3F:11:22:33" in text
+        assert "a replacement device" in text
+
+    def test_restore_json_download(self):
+        """Test the restore download contains exactly the configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                response = client.get(f"/backups/{doc_id}/restore.json")
+
+        assert response.status_code == 200
+        assert response.json() == self._gen2_record()["settings"]["configuration"]
+        assert (
+            f'filename="restore-192.168.10.20-{doc_id}.json"'
+            in (response.headers["content-disposition"])
+        )
+
+    def test_restore_json_missing_for_unrecognized_backup(self):
+        """Test records without a config payload have no restore download."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                response = client.get(f"/backups/{doc_id}/restore.json")
+
+                assert response.status_code == 404
+
+    def test_backup_page_handles_unrecognized_backup(self):
+        """Test the restore view degrades gracefully for odd records."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                text = client.get(f"/backups/{doc_id}").text
+
+        assert "does not contain a recognizable configuration payload" in text
+
+    def test_gen1_restore_command(self):
+        """Test generation 1 backups use the settings endpoint."""
+        record = {
+            "ip_address": "192.168.10.11",
+            "timestamp": "2026-11-15T10:00:00+00:00",
+            "generation": 1,
+            "device_info": {"type": "SHSW-1", "mac": "ABC123"},
+            "settings": {
+                "settings": {"device": {"name": "Office"}},
+                "actions": [{"id": 0}],
+                "status": {"input": [0]},
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[record])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                page = client.get(f"/backups/{doc_id}").text
+                download = client.get(f"/backups/{doc_id}/restore.json")
+
+        assert "curl -sS -X POST &#34;http://192.168.10.11/settings&#34;" in page
+        assert download.json() == {"device": {"name": "Office"}}
+
+    def test_viewer_can_download_restore_config(self):
+        """Test read-only accounts may download the restore payload."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            doc_id = store.all()[0]["doc_id"]
+            client = TestClient(app)
+            _login(client, "guest@example.com", "viewer-password-1")
+
+            assert client.get(f"/backups/{doc_id}/restore.json").status_code == 200
+
+    def test_device_page_shows_chips_and_restore_latest(self):
+        """Test the history page summarizes configs and links to a restore."""
+        older = self._gen2_record()
+        older["timestamp"] = "2026-11-14T10:00:00+00:00"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir, records=[self._gen2_record(), older, _record()]
+            )
+            doc_ids = [r["doc_id"] for r in store.all()]
+            with _client(app) as client:
+                text = client.get("/devices/192.168.10.20").text
+
+        assert f'href="/backups/{doc_ids[0]}#manual-restore"' in text
+        assert "Restore latest" in text
+        assert "Wi-Fi: HomeNet" in text
+        assert "MQTT" in text
+
+    def test_device_page_collapses_unchanged_backups(self):
+        """Test identical configurations collapse to one chip set."""
+        first = self._gen2_record()
+        second = self._gen2_record()
+        second["timestamp"] = "2026-11-14T10:00:00+00:00"
+        changed = self._gen2_record()
+        changed["timestamp"] = "2026-11-13T10:00:00+00:00"
+        changed["settings"]["configuration"]["mqtt"]["enable"] = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[first, second, changed])
+            with _client(app) as client:
+                text = client.get("/devices/192.168.10.20").text
+
+        assert text.count("Wi-Fi: HomeNet") == 2
+        assert text.count(">unchanged<") == 1
+
+    def test_device_page_marks_unrecognizable_backups(self):
+        """Test records without a config payload show a neutral dash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                text = client.get("/devices/192.168.1.10").text
+
+        assert ">unchanged<" not in text
+        assert "config-summary-cell" in text
+
+    def test_backup_page_restore_card_anchor(self):
+        """Test the restore card can be linked to directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                text = client.get(f"/backups/{doc_id}").text
+
+        assert 'id="manual-restore"' in text
+
+
+class TestConfigCompare:
+    """Tests for the backup configuration comparison view."""
+
+    def _record(self, timestamp, mqtt_enable=True):
+        return {
+            "ip_address": "192.168.10.20",
+            "timestamp": timestamp,
+            "generation": 2,
+            "device_info": {"gen": 2, "name": "Kitchen"},
+            "settings": {
+                "configuration": {
+                    "sys": {"device": {"name": "Kitchen"}},
+                    "wifi": {"sta": {"ssid": "HomeNet", "psk": "hidden-pass"}},
+                    "mqtt": {"enable": mqtt_enable},
+                },
+                "status": {"sys": {"uptime": 1}},
+            },
+        }
+
+    def test_compare_defaults_to_latest_pair(self):
+        """Test the default view diffs the newest two backups."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-20T10:00:00+00:00", mqtt_enable=False),
+                    self._record("2026-11-21T10:00:00+00:00", mqtt_enable=True),
+                ],
+            )
+            with _client(app) as client:
+                response = client.get("/devices/192.168.10.20/compare")
+
+        assert response.status_code == 200
+        text = response.text
+        assert "Compare configurations" in text
+        assert "mqtt.enable" in text
+        assert "1 changed" in text
+        # live state must not leak into the diff
+        assert "uptime" not in text
+        assert "hidden-pass" not in text
+
+    def test_compare_identical_backups(self):
+        """Test equal configurations report no differences."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-20T10:00:00+00:00"),
+                    self._record("2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            with _client(app) as client:
+                text = client.get("/devices/192.168.10.20/compare").text
+
+        assert "identical configurations" in text
+
+    def test_compare_specific_pair(self):
+        """Test explicit backup identifiers select the diff inputs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-19T10:00:00+00:00", mqtt_enable=False),
+                    self._record("2026-11-20T10:00:00+00:00"),
+                    self._record("2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            old_id = [
+                r["doc_id"]
+                for r in store.all()
+                if r["timestamp"].startswith("2026-11-19")
+            ][0]
+            new_id = [
+                r["doc_id"]
+                for r in store.all()
+                if r["timestamp"].startswith("2026-11-21")
+            ][0]
+            with _client(app) as client:
+                text = client.get(
+                    f"/devices/192.168.10.20/compare?a={old_id}&b={new_id}"
+                ).text
+
+        assert "1 changed" in text
+        assert "mqtt.enable" in text
+
+    def test_compare_rejects_unknown_backups(self):
+        """Test unknown or malformed backup identifiers are handled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir, records=[self._record("2026-11-21T10:00:00+00:00")]
+            )
+            with _client(app) as client:
+                base = "/devices/192.168.10.20/compare"
+
+                assert client.get(f"{base}?a=999").status_code == 404
+                assert client.get(f"{base}?a=abc").status_code == 400
+                assert client.get("/devices/10.9.8.7/compare").status_code == 404
+
+    def test_compare_without_config_payloads(self):
+        """Test records lacking configs degrade gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    _record(timestamp="2026-11-20T10:00:00+00:00"),
+                    _record(timestamp="2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            with _client(app) as client:
+                text = client.get("/devices/192.168.1.10/compare").text
+
+        assert "nothing to compare" in text
+
+    def test_device_page_links_to_diff(self):
+        """Test older history rows link to the diff against the newer one."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-20T10:00:00+00:00", mqtt_enable=False),
+                    self._record("2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            newest, older = (r["doc_id"] for r in store.all())
+            with _client(app) as client:
+                text = client.get("/devices/192.168.10.20").text
+
+        assert f"compare?a={older}&amp;b={newest}" in text
+        assert ">Diff<" in text
+
+    def test_viewer_can_compare(self):
+        """Test read-only accounts may compare configurations."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-20T10:00:00+00:00", mqtt_enable=False),
+                    self._record("2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            client = TestClient(app)
+            _login(client, "guest@example.com", "viewer-password-1")
+
+            assert client.get("/devices/192.168.10.20/compare").status_code == 200

@@ -45,6 +45,12 @@ from .oidc import (
     discover_endpoints,
     oidc_config_from_settings,
 )
+from .recovery import (
+    backup_highlights,
+    compare_configs,
+    recovery_for,
+    restorable_config,
+)
 from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
@@ -1038,6 +1044,105 @@ def _register_settings_routes(
     _register_user_detail_settings_routes(app, configuration, store, scheduler)
 
 
+def _backup_summaries(backups: list[dict]) -> list[dict]:
+    """Build per-backup summary chips, collapsing rows identical to newer ones."""
+    summaries: list[dict] = []
+    previous: list[str] | None = None
+    for record in backups:
+        chips = backup_highlights(record)
+        if previous is not None and chips == previous:
+            summaries.append({"state": "unchanged", "chips": []})
+        else:
+            summaries.append({"state": "chips" if chips else "none", "chips": chips})
+        previous = chips
+    return summaries
+
+
+def _parse_doc_id(value: str | None, default: int) -> int:
+    """Return the requested backup identifier, or the default."""
+    if value is None or not value.strip():
+        return default
+    return int(value)
+
+
+def _register_device_compare_route(app: FastAPI, store: BackupStore) -> None:
+    """Register the route comparing the configurations of two backups."""
+
+    @app.get("/devices/{ip_address}/compare", response_class=HTMLResponse)
+    async def compare_backups(request: Request, ip_address: str):
+        """Compare the restorable configuration of two backups of a device."""
+        backups = store.by_device(ip_address)
+        if not backups:
+            raise HTTPException(status_code=404, detail="Device not found")
+        records = dict(
+            zip((int(b.get("doc_id", 0)) for b in backups), backups, strict=True)
+        )
+        default_ids = list(records)
+        left_id = default_ids[1] if len(default_ids) > 1 else default_ids[0]
+        right_id = default_ids[0]
+        try:
+            left_id = _parse_doc_id(request.query_params.get("a"), left_id)
+            right_id = _parse_doc_id(request.query_params.get("b"), right_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="Backup identifiers must be numbers"
+            ) from exc
+        left = records.get(left_id)
+        right = records.get(right_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        config_left = restorable_config(left)
+        config_right = restorable_config(right)
+        return templates.TemplateResponse(
+            request=request,
+            name="compare.html",
+            context={
+                "ip_address": ip_address,
+                "display_name": device_display_name(right),
+                "backups": backups,
+                "left": left,
+                "right": right,
+                "diff": compare_configs(config_left, config_right),
+                "comparable": bool(config_left or config_right),
+            },
+        )
+
+
+def _register_backup_download_routes(app: FastAPI, store: BackupStore) -> None:
+    """Register the raw snapshot and restore configuration download routes."""
+
+    @app.get("/backups/{doc_id}/restore.json")
+    async def download_restore_config(doc_id: int):
+        """Download only the restorable configuration of a backup."""
+        record = store.get(doc_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        recovery = recovery_for(record)
+        if not recovery.restorable:
+            raise HTTPException(
+                status_code=404,
+                detail="This backup does not contain a restorable configuration",
+            )
+        return JSONResponse(
+            content=recovery.config,
+            headers={
+                "Content-Disposition": f'attachment; filename="{recovery.restore_filename}"'
+            },
+        )
+
+    @app.get("/backups/{doc_id}/download")
+    async def download_backup(doc_id: int):
+        """Download a single backup as JSON."""
+        record = store.get(doc_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        filename = f"retentacle-{record.get('ip_address', 'device')}-{doc_id}.json"
+        return JSONResponse(
+            content=record,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+
 def _register_routes(
     app: FastAPI,
     configuration: Configuration,
@@ -1075,6 +1180,7 @@ def _register_routes(
                 "ip_address": ip_address,
                 "display_name": device_display_name(latest),
                 "backups": backups,
+                "summaries": _backup_summaries(backups),
                 "web_url": _device_web_url(ip_address),
             },
         )
@@ -1094,21 +1200,12 @@ def _register_routes(
                 "backup": record,
                 "display_name": device_display_name(record),
                 "pretty_json": json.dumps(record, indent=2, sort_keys=True),
+                "recovery": recovery_for(record),
             },
         )
 
-    @app.get("/backups/{doc_id}/download")
-    async def download_backup(doc_id: int):
-        """Download a single backup as JSON."""
-        record = store.get(doc_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="Backup not found")
-        filename = f"retentacle-{record.get('ip_address', 'device')}-{doc_id}.json"
-        return JSONResponse(
-            content=record,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
-
+    _register_backup_download_routes(app, store)
+    _register_device_compare_route(app, store)
     _register_backup_routes(app, store, scheduler)
     _register_settings_routes(app, configuration, store, scheduler)
 

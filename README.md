@@ -163,9 +163,11 @@ server — your device backups remain untouched.
 ### Web UI
 
 * `/` - devices overview with scheduler status, backup counts, last backup times, and per-device indicators for automatic backups and recent backups.
-* `/devices/<ip-address>` - all backups for one device, newest first, plus a link to the device web UI.
-* `/backups/<id>` - metadata and raw JSON for a single backup.
+* `/devices/<ip-address>` - all backups for one device, newest first, with per-backup configuration chips, an "unchanged" marker for identical configs, plus links to the device web UI and to restoring the latest backup.
+* `/devices/<ip-address>/compare?a=<id>&b=<id>` - leaf-level diff of the restorable configurations of two backups (changed / added / removed, credentials masked, live state excluded); defaults to the newest pair.
+* `/backups/<id>` - metadata, a manual restore section, a configuration summary, the device state at backup time, and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
+* `/backups/<id>/restore.json` - download only the restorable configuration, ready for `Shelly.SetConfig` (Gen 2/3) or `POST /settings` (Gen 1).
 * `/settings` - configure the backup schedule, device IP addresses, and single sign-on, and manage user accounts, roles, and passwords (admin only).
 * `/setup` - first-run wizard to create the initial admin account.
 * `/login`, `/logout` - sign in and out.
@@ -173,6 +175,35 @@ server — your device backups remain untouched.
 * `/api/status` - scheduler status and live backup progress as JSON.
 * `/health` - server and scheduler status as JSON (the only page that does not require a login).
 * `/users` - legacy alias that redirects to `/settings`.
+
+### Restoring from a backup
+
+Retentacle does not push settings to devices, so the backup page is built
+around a fast manual restore. Every backup is triaged into three zones:
+
+1. **Manual restore** — the restorable payload (`settings.configuration`
+   for Gen 2/3, `settings.settings` for Gen 1) with one-click copy, a
+   dedicated `restore.json` download, a four-step checklist, and a
+   ready-made `curl` command pre-filled with the device's IP, the correct
+   endpoint (`rpc/Shelly.SetConfig` or `/settings`) and the download's
+   filename. Adjust the IP and run it next to the downloaded file.
+2. **Configuration** — the same payload as a human-readable table,
+   grouped by device section (System, Wi-Fi, MQTT, Switch 0, …), with
+   credential values masked and copy buttons on every value.
+3. **Device state** — the live `status` (and Gen 1 `actions`) recorded at
+   backup time, collapsed and marked *information only — never restored*.
+
+Typical flow after losing a device: open the device history and find the
+last backup before the unwanted change — the list shows each backup's Wi-Fi
+SSID, MQTT state, component counts and firmware as chips, and collapses rows
+whose configuration matches the newer one to "unchanged" — then hit
+**Restore latest** or open the chosen backup. The **Diff** link on each
+history row compares that backup's configuration with the next newer one —
+changed, added and removed settings are listed separately (credentials stay
+masked, live state is never compared), so the right restore point is easy to
+pick. Then download the restore JSON, adjust the IP in the shown command and
+run it, and take a fresh backup in Retentacle to verify. Model, MAC and
+firmware are shown for reference only; they never appear in a restore payload.
 
 A **Run backup now** button is available on every page. It backs up the devices
 configured on the Settings page. If no devices are configured there, it backs up

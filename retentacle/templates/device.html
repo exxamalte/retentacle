@@ -27,6 +27,11 @@
     </div>
     <div class="header-actions">
       <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
+      <a
+        class="button"
+        href="/backups/{{ backups[0].doc_id }}#manual-restore"
+        title="Open the restore section of the newest backup"
+      >Restore latest</a>
       {% if web_url %}
         <a
           class="button"
@@ -51,26 +56,47 @@
           <tr>
             <th scope="col">Backup time</th>
             <th scope="col">Generation</th>
-            <th scope="col">Model</th>
+            <th scope="col">Configuration</th>
             <th scope="col"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           {% for backup in backups %}
-            {% set device_info = backup.get('device_info') or {} %}
+            {% set summary = summaries[loop.index0] %}
+            {% set newer = backups[loop.index0 - 1] if loop.index0 > 0 %}
             <tr>
               <td>{{ backup.timestamp|format_timestamp }}</td>
               <td><span class="badge">Gen {{ backup.get('generation', '?') }}</span></td>
-              <td>
-                {{ device_info.get('model')
-                   or device_info.get('type')
-                   or device_info.get('app')
-                   or '—' }}
+              <td class="config-summary-cell">
+                {% if summary.state == 'chips' %}
+                  <div class="badge-list">
+                    {% for chip in summary.chips %}
+                      <span class="badge muted">{{ chip }}</span>
+                    {% endfor %}
+                  </div>
+                {% elif summary.state == 'unchanged' %}
+                  <span class="device-meta">unchanged</span>
+                {% else %}
+                  <span class="device-meta">—</span>
+                {% endif %}
               </td>
               <td>
                 <div class="row-actions">
                   <a class="button small" href="/backups/{{ backup.doc_id }}">View</a>
                   <a class="button small" href="/backups/{{ backup.doc_id }}/download">Download</a>
+                  {% if newer %}
+                    <a
+                      class="button small"
+                      href="/devices/{{ ip_address }}/compare?a={{ backup.doc_id }}&amp;b={{ newer.doc_id }}"
+                      title="Show configuration changes since this backup"
+                    >Diff</a>
+                  {% elif backups|length > 1 %}
+                    <a
+                      class="button small"
+                      href="/devices/{{ ip_address }}/compare"
+                      title="Compare the two newest backups"
+                    >Diff</a>
+                  {% endif %}
                 </div>
               </td>
             </tr>
