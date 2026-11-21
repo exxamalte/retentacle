@@ -3397,7 +3397,7 @@ class TestConfigCompare:
         assert "nothing to compare" in text
 
     def test_device_page_links_to_diff(self):
-        """Test older history rows link to the diff against the newer one."""
+        """Test only rows with a newer backup offer the Diff link."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = _create_app(
                 tmpdir,
@@ -3411,7 +3411,10 @@ class TestConfigCompare:
                 text = client.get("/devices/192.168.10.20").text
 
         assert f"compare?a={older}&amp;b={newest}" in text
-        assert ">Diff<" in text
+        # The newest row has no newer backup to compare against, so it shows
+        # no Diff button, and never a bare default comparison.
+        assert text.count(">Diff<") == 1
+        assert 'href="/devices/192.168.10.20/compare"' not in text
 
     def test_viewer_can_compare(self):
         """Test read-only accounts may compare configurations."""

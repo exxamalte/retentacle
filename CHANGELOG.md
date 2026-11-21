@@ -5,6 +5,7 @@
 * Offer a ready-to-run manual restore command and a dedicated `restore.json` download per backup.
 * Summarize each backup on the device history page with configuration chips, mark unchanged configs, and add a "Restore latest" shortcut.
 * Add a configuration diff view comparing any two backups of a device, with changed, added and removed settings.
+* Show the history Diff button only where a newer backup exists to compare against.
 * Rename the application to Retentacle.
 * Show the tagline "Tentacles for your Shelly backups." under the name in the header.
 * Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
