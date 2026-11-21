@@ -54,7 +54,7 @@ class TestCLI:
             port=None,
         )
         mock_backup.assert_called_once_with(configuration)
-        mock_backup.return_value.execute.assert_called_once_with()
+        mock_backup.return_value.execute.assert_called_once_with(automatic=True)
         mock_run_server.assert_not_called()
 
     @patch("retentacle.cli.run_server")
@@ -98,7 +98,7 @@ class TestCLI:
             host=None,
             port=None,
         )
-        mock_backup.return_value.execute.assert_called_once_with()
+        mock_backup.return_value.execute.assert_called_once_with(automatic=True)
         mock_run_server.assert_not_called()
 
     @patch("retentacle.cli.run_server")

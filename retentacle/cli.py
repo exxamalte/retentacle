@@ -77,8 +77,8 @@ def main(argv: list[str] | None = None) -> None:
             port=args.port,
         )
         if args.once:
-            # Execute a single backup
-            Backup(configuration).execute()
+            # Execute a single backup (scheduled/cron style run).
+            Backup(configuration).execute(automatic=True)
         else:
             # Run the web server and scheduled backups
             run_server(configuration)

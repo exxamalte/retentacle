@@ -57,7 +57,12 @@ every hour. Open that address in a browser for the first time to create the
 initial admin account, then sign in and add your device IP addresses on the
 **Settings** page. Alternatively, list devices under `ip_addresses` in a
 configuration file. The first backup starts immediately after startup;
-subsequent backups run at the configured interval.
+subsequent backups run at the configured interval. If the computer was off or
+asleep at a scheduled time, the missed backup runs right away at the next
+startup. Your chosen slot is sticky: scheduled backups always happen on the
+grid of the date and time selected on the Settings page — e.g. daily at 3am —
+no matter when a run actually started or finished, and restarts, catch-up
+runs, and manual backups never move later runs off that schedule.
 
 ### Server options
 
@@ -182,7 +187,9 @@ that device without waiting for the next scheduled run.
 Each device in the overview shows whether it is included in automatic backups
 and whether its latest backup is recent. A backup is considered recent when it
 is within the configured automatic backup interval (plus a short grace period),
-or within the last 24 hours when automatic backups are disabled.
+or within the last 24 hours when automatic backups are disabled. The
+**Last automatic backup** card follows scheduled runs only — manually started
+backups, including single-device ones, do not move it.
 
 Shelly devices usually serve their own configuration page over HTTP, so each
 device's web UI can be opened in a new tab from the overview icon or the detail

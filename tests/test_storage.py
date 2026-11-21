@@ -15,15 +15,19 @@ def _record(
     timestamp="2026-11-15T10:00:00+00:00",
     device_info=None,
     settings=None,
+    automatic=None,
 ):
     """Create a backup record for tests."""
-    return {
+    record = {
         "ip_address": ip_address,
         "timestamp": timestamp,
         "generation": (device_info or {}).get("gen", 1),
         "device_info": device_info or {},
         "settings": settings if settings is not None else {"test": True},
     }
+    if automatic is not None:
+        record["automatic"] = automatic
+    return record
 
 
 class TestBackupStore:
@@ -400,6 +404,22 @@ class TestBackupStore:
             store.add(_record(timestamp="not-a-timestamp"))
 
             assert store.latest_backup_time() is None
+
+    def test_latest_backup_time_automatic_only(self):
+        """Test that manual backups can be excluded from the latest time."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Path(tmpdir) / "retentacle_backups.json")
+            store.add(_record(timestamp="2026-11-15T10:00:00+00:00", automatic=True))
+            store.add(_record(timestamp="2026-11-16T10:00:00+00:00", automatic=False))
+            # Legacy records without a trigger marker count as automatic.
+            store.add(_record(timestamp="2026-11-14T10:00:00+00:00"))
+
+            assert store.latest_backup_time() == datetime(
+                2026, 11, 16, 10, 0, tzinfo=UTC
+            )
+            assert store.latest_backup_time(automatic_only=True) == datetime(
+                2026, 11, 15, 10, 0, tzinfo=UTC
+            )
 
     def test_settings_without_database(self):
         """Test reading settings from a database that does not exist yet."""

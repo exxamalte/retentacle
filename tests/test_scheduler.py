@@ -21,7 +21,9 @@ class SlowBackup:
         self.max_active = 0
         self._lock = threading.Lock()
 
-    def execute(self, ip_addresses=None, on_start=None, on_progress=None):
+    def execute(
+        self, ip_addresses=None, on_start=None, on_progress=None, *, automatic=False
+    ):
         """Run a slow fake backup."""
         with self._lock:
             self.calls += 1
@@ -40,7 +42,9 @@ class SlowBackup:
 class ProgressBackup:
     """Backup fake that reports progress."""
 
-    def execute(self, ip_addresses=None, on_start=None, on_progress=None):
+    def execute(
+        self, ip_addresses=None, on_start=None, on_progress=None, *, automatic=False
+    ):
         """Report progress for two fake devices."""
         on_start(2)
         on_progress("192.168.1.10", True)
@@ -56,7 +60,9 @@ class BlockingProgressBackup:
         self.started = threading.Event()
         self.release = threading.Event()
 
-    def execute(self, ip_addresses=None, on_start=None, on_progress=None):
+    def execute(
+        self, ip_addresses=None, on_start=None, on_progress=None, *, automatic=False
+    ):
         """Pause after the first device until released."""
         on_start(2)
         on_progress("192.168.1.10", True)
@@ -95,7 +101,7 @@ class TestBackupScheduler:
 
         await scheduler.run_once()
 
-        backup.execute.assert_called_once_with(None, ANY, ANY)
+        backup.execute.assert_called_once_with(None, ANY, ANY, automatic=False)
         assert scheduler.last_backed_up == ["192.168.1.10"]
         assert scheduler.last_error is None
         assert scheduler.run_count == 1
@@ -140,7 +146,9 @@ class TestBackupScheduler:
 
         await scheduler.run_once()
 
-        mock_to_thread.assert_awaited_once_with(backup.execute, None, ANY, ANY)
+        mock_to_thread.assert_awaited_once_with(
+            backup.execute, None, ANY, ANY, automatic=False
+        )
 
     @pytest.mark.asyncio
     async def test_run_once_with_ip_addresses(self):
@@ -151,7 +159,9 @@ class TestBackupScheduler:
 
         await scheduler.run_once(["192.168.1.10"])
 
-        backup.execute.assert_called_once_with(["192.168.1.10"], ANY, ANY)
+        backup.execute.assert_called_once_with(
+            ["192.168.1.10"], ANY, ANY, automatic=False
+        )
         assert scheduler.last_backed_up == ["192.168.1.10"]
 
     @pytest.mark.asyncio
@@ -168,7 +178,7 @@ class TestBackupScheduler:
         await scheduler.run_once()
 
         backup.execute.assert_called_once_with(
-            ["192.168.1.10", "192.168.1.11"], ANY, ANY
+            ["192.168.1.10", "192.168.1.11"], ANY, ANY, automatic=False
         )
 
     @pytest.mark.asyncio
@@ -181,7 +191,9 @@ class TestBackupScheduler:
 
         await scheduler.run_once(["192.168.1.20"])
 
-        backup.execute.assert_called_once_with(["192.168.1.20"], ANY, ANY)
+        backup.execute.assert_called_once_with(
+            ["192.168.1.20"], ANY, ANY, automatic=False
+        )
         provider.assert_not_called()
 
     @pytest.mark.asyncio
@@ -393,7 +405,8 @@ class TestBackupScheduler:
                 await asyncio.sleep(0.01)
 
             assert scheduler.run_count == 1
-            assert scheduler.next_run == scheduler.last_run + timedelta(seconds=3600)
+            assert scheduler.next_run > scheduler.last_run
+            assert (scheduler.next_run - scheduler.last_run) <= timedelta(seconds=3600)
             assert saved[-1] == scheduler.next_run
         finally:
             await scheduler.stop()
@@ -489,7 +502,9 @@ class TestBackupScheduler:
                     break
                 await asyncio.sleep(0.01)
 
-            backup.execute.assert_called_once_with(["192.168.1.10"], ANY, ANY)
+            backup.execute.assert_called_once_with(
+                ["192.168.1.10"], ANY, ANY, automatic=True
+            )
         finally:
             await scheduler.stop()
 
@@ -578,3 +593,129 @@ class TestBackupScheduler:
             assert scheduler.run_count >= 2
         finally:
             await scheduler.stop()
+
+
+class RecordingBackup:
+    """Backup fake that records the trigger of each run."""
+
+    def __init__(self):
+        """Initialise the fake."""
+        self.calls: list[bool] = []
+        self.done = threading.Event()
+
+    def execute(
+        self, ip_addresses=None, on_start=None, on_progress=None, *, automatic=False
+    ):
+        """Record the automatic flag of this run."""
+        self.calls.append(automatic)
+        self.done.set()
+        return []
+
+
+class TestSchedulerRunTrigger:
+    """Tests for marking automatic and manual backup runs."""
+
+    @pytest.mark.asyncio
+    async def test_run_once_defaults_to_manual(self):
+        """Test that a directly requested run is not marked automatic."""
+        backup = RecordingBackup()
+        scheduler = BackupScheduler(backup, 60)
+
+        await scheduler.run_once(["192.168.1.10"])
+
+        assert backup.calls == [False]
+
+    @pytest.mark.asyncio
+    async def test_loop_run_is_marked_automatic(self):
+        """Test that scheduled loop runs record the automatic trigger."""
+        backup = RecordingBackup()
+        scheduler = BackupScheduler(backup, 60, next_run_at=datetime.now(UTC))
+        await scheduler.start()
+        try:
+            assert await asyncio.to_thread(backup.done.wait, 2)
+        finally:
+            await scheduler.stop()
+
+        assert backup.calls == [True]
+
+    @pytest.mark.asyncio
+    async def test_start_clamps_missed_next_run(self):
+        """Test that a next run in the past is caught up immediately."""
+        backup = RecordingBackup()
+        missed = datetime.now(UTC) - timedelta(days=1)
+        scheduler = BackupScheduler(backup, 86400, next_run_at=missed)
+
+        await scheduler.start()
+        try:
+            assert scheduler.next_run > missed
+            assert await asyncio.to_thread(backup.done.wait, 2)
+            await asyncio.sleep(0)
+            assert backup.calls == [True]
+            assert scheduler.next_run > datetime.now(UTC)
+        finally:
+            await scheduler.stop()
+
+
+class TestScheduleGrid:
+    """Tests for the fixed schedule grid of automatic runs."""
+
+    @pytest.mark.asyncio
+    async def test_run_at_chosen_slot_keeps_the_slot(self):
+        """Test a run at the chosen slot schedules the next one at the same offset."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(backup, 60)
+        chosen = datetime.now(UTC) + timedelta(seconds=0.2)
+
+        await scheduler.set_schedule(interval=60, enabled=True, next_run_at=chosen)
+        try:
+            for _ in range(200):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.01)
+
+            assert scheduler.next_run == chosen + timedelta(seconds=60)
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_catch_up_keeps_daily_wall_clock_time(self):
+        """Test a missed 3am run catches up without moving future runs."""
+        backup = Mock()
+        backup.execute.return_value = []
+        interval = 86400
+        anchor = datetime.now(UTC).replace(
+            hour=3, minute=0, second=0, microsecond=0
+        ) - timedelta(days=3)
+        scheduler = BackupScheduler(backup, interval, next_run_at=anchor)
+
+        await scheduler.start()
+        try:
+            for _ in range(200):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.01)
+
+            next_run = scheduler.next_run
+            assert next_run > datetime.now(UTC)
+            steps, remainder = divmod((next_run - anchor).total_seconds(), interval)
+            assert remainder == 0
+            assert steps >= 3
+            assert next_run.hour == 3
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_manual_backup_keeps_the_grid(self):
+        """Test that manually triggered runs never shift the grid."""
+        backup = Mock()
+        backup.execute.return_value = []
+        anchor = datetime.now(UTC).replace(
+            hour=3, minute=0, second=0, microsecond=0
+        ) + timedelta(days=1)
+        scheduler = BackupScheduler(backup, 86400, next_run_at=anchor)
+
+        await scheduler.run_once()
+        await scheduler.run_once(automatic=True)
+
+        assert scheduler.next_run == anchor

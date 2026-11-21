@@ -1057,7 +1057,7 @@ def _register_routes(
                     configuration, store, scheduler, datetime.now(UTC)
                 ),
                 "scheduler": scheduler,
-                "last_backup": store.latest_backup_time(),
+                "last_backup": store.latest_backup_time(automatic_only=True),
             },
         )
 

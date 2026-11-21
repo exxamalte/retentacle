@@ -42,9 +42,11 @@ def _record(
     generation=2,
     device_info=None,
     settings=None,
+    *,
+    automatic=None,
 ):
     """Create a backup record for server tests."""
-    return {
+    record = {
         "ip_address": ip_address,
         "timestamp": timestamp,
         "generation": generation,
@@ -53,6 +55,9 @@ def _record(
         else {"gen": generation, "name": "Kitchen"},
         "settings": settings or {"device": {"name": "Kitchen"}},
     }
+    if automatic is not None:
+        record["automatic"] = automatic
+    return record
 
 
 def _create_setup_app(tmpdir):
@@ -328,7 +333,7 @@ class TestServer:
         assert "Backup started" in response.text
         assert "Run backup now" in response.text
         assert "Backup interval" in response.text
-        assert "Last backup" in response.text
+        assert "Last automatic backup" in response.text
         assert "Next run" in response.text
         assert "Automatic backups off" in response.text
         assert "No backups yet" in response.text
@@ -363,6 +368,27 @@ class TestServer:
             not in response.text
         )
 
+    def test_index_last_backup_ignores_manual_records(self):
+        """Test the last backup card only counts automatic runs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(
+                tmpdir,
+                records=[
+                    _record(timestamp="2026-11-15T10:00:00+00:00", automatic=True),
+                    _record(
+                        ip_address="192.168.1.11",
+                        timestamp="2026-11-16T10:00:00+00:00",
+                        automatic=False,
+                    ),
+                ],
+            )
+            with _client(app) as client:
+                text = client.get("/").text
+
+        card = text.split("Last automatic backup</p>")[1].split("stat-label")[0]
+        assert _format_timestamp(datetime(2026, 11, 15, 10, 0, tzinfo=UTC)) in card
+        assert _format_timestamp(datetime(2026, 11, 16, 10, 0, tzinfo=UTC)) not in card
+
     def test_index_shows_never_without_backups(self):
         """Test that the overview shows no last backup without records."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -372,7 +398,7 @@ class TestServer:
                 response = client.get("/")
 
         assert response.status_code == 200
-        assert "Last backup" in response.text
+        assert "Last automatic backup" in response.text
         assert "Never" in response.text
         assert (
             _format_timestamp(datetime(2026, 11, 16, 12, 0, tzinfo=UTC))

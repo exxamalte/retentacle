@@ -36,8 +36,8 @@ class TestBackup:
         ):
             assert backup.execute() == ["192.168.1.1", "192.168.1.2"]
             assert mock_device_backup.call_count == 2
-            mock_device_backup.assert_any_call("192.168.1.1")
-            mock_device_backup.assert_any_call("192.168.1.2")
+            mock_device_backup.assert_any_call("192.168.1.1", False)
+            mock_device_backup.assert_any_call("192.168.1.2", False)
 
     def test_execute_with_explicit_ip_addresses(self):
         """Test execute backs up only the provided devices."""
@@ -111,7 +111,7 @@ class TestBackup:
             backup, "_device_backup", return_value=True
         ) as mock_device_backup:
             assert backup.backup_device("192.168.1.1") is True
-            mock_device_backup.assert_called_once_with("192.168.1.1")
+            mock_device_backup.assert_called_once_with("192.168.1.1", False)
 
     def test_backup_device_returns_false_on_failure(self):
         """Test that a failed single-device backup returns False."""
@@ -154,7 +154,7 @@ class TestBackup:
             with patch.object(backup, "_generation_1", return_value=True) as mock_gen1:
                 assert backup._device_backup("192.168.1.1") is True  # noqa: SLF001
                 mock_gen1.assert_called_once_with(
-                    "192.168.1.1", {"type": "SHSW-1", "mac": "ABC123"}
+                    "192.168.1.1", {"type": "SHSW-1", "mac": "ABC123"}, False
                 )
 
     @patch("httpx.get")
@@ -274,7 +274,7 @@ class TestBackup:
                 assert "status" in call_args
                 assert call_args["settings"] == "http://192.168.1.1/settings"
                 mock_store.assert_called_once_with(
-                    "192.168.1.1", {"settings": {}, "status": {}}, {}
+                    "192.168.1.1", {"settings": {}, "status": {}}, {}, False
                 )
 
     def test_generation_2_backup(self):
@@ -304,6 +304,7 @@ class TestBackup:
                     "192.168.1.1",
                     {"configuration": {}, "status": {}},
                     {"gen": 2},
+                    False,
                 )
 
     @patch("httpx.get")
@@ -387,6 +388,7 @@ class TestBackup:
             assert record["generation"] == 2
             assert record["device_info"] == device_info
             assert record["settings"] == device_settings
+            assert record["automatic"] is False
             store.prune.assert_called_once_with(
                 "192.168.1.1",
                 RetentionPolicy(monthly=6, weekly=3, daily=5, hourly=2),
@@ -459,3 +461,17 @@ class TestBackup:
             backup = Backup(config, store=store)
 
             assert backup._store("192.168.1.1", {}) is False  # noqa: SLF001
+
+    def test_store_marks_automatic_runs(self):
+        """Test that automatic runs are marked in the stored record."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None)
+            store = Mock()
+            backup = Backup(config, store=store)
+
+            backup._store(  # noqa: SLF001
+                "192.168.1.1", {"settings": {}}, {"gen": 2}, automatic=True
+            )
+
+            record = store.add.call_args[0][0]
+            assert record["automatic"] is True

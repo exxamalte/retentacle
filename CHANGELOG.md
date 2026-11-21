@@ -7,6 +7,9 @@
 * Remove the `--ip-address` and `--interval` command line options; configure devices and the backup schedule in the web UI or the configuration file.
 * Store web settings in a separate `retentacle_settings.json` database, so they can be reset without touching backups.
 * Name the backups database file `retentacle_backups.json`.
+* Run missed scheduled backups immediately after startup instead of showing a next run in the past.
+* Keep automatic backups on the fixed wall-clock schedule chosen in the settings, even after restarts, late catch-up runs, or manual backups.
+* Track the trigger of each backup and base the overview's last automatic backup card on scheduled runs only.
 * Replace the header email badge and sign-out button with an avatar account menu showing the role, settings link, and app version, using the OIDC profile picture from userinfo or the ID token when available.
 * Remove the Settings button from the header; it lives in the account menu now.
 * Serve the app logo from a static folder inside the package and show it in the header and as favicon.
