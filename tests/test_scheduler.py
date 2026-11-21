@@ -405,7 +405,8 @@ class TestBackupScheduler:
                 await asyncio.sleep(0.01)
 
             assert scheduler.run_count == 1
-            assert scheduler.next_run == scheduler.last_run + timedelta(seconds=3600)
+            assert scheduler.next_run > scheduler.last_run
+            assert (scheduler.next_run - scheduler.last_run) <= timedelta(seconds=3600)
             assert saved[-1] == scheduler.next_run
         finally:
             await scheduler.stop()
@@ -653,3 +654,68 @@ class TestSchedulerRunTrigger:
             assert scheduler.next_run > datetime.now(UTC)
         finally:
             await scheduler.stop()
+
+
+class TestScheduleGrid:
+    """Tests for the fixed schedule grid of automatic runs."""
+
+    @pytest.mark.asyncio
+    async def test_run_at_chosen_slot_keeps_the_slot(self):
+        """Test a run at the chosen slot schedules the next one at the same offset."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(backup, 60)
+        chosen = datetime.now(UTC) + timedelta(seconds=0.2)
+
+        await scheduler.set_schedule(interval=60, enabled=True, next_run_at=chosen)
+        try:
+            for _ in range(200):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.01)
+
+            assert scheduler.next_run == chosen + timedelta(seconds=60)
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_catch_up_keeps_daily_wall_clock_time(self):
+        """Test a missed 3am run catches up without moving future runs."""
+        backup = Mock()
+        backup.execute.return_value = []
+        interval = 86400
+        anchor = datetime.now(UTC).replace(
+            hour=3, minute=0, second=0, microsecond=0
+        ) - timedelta(days=3)
+        scheduler = BackupScheduler(backup, interval, next_run_at=anchor)
+
+        await scheduler.start()
+        try:
+            for _ in range(200):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.01)
+
+            next_run = scheduler.next_run
+            assert next_run > datetime.now(UTC)
+            steps, remainder = divmod((next_run - anchor).total_seconds(), interval)
+            assert remainder == 0
+            assert steps >= 3
+            assert next_run.hour == 3
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_manual_backup_keeps_the_grid(self):
+        """Test that manually triggered runs never shift the grid."""
+        backup = Mock()
+        backup.execute.return_value = []
+        anchor = datetime.now(UTC).replace(
+            hour=3, minute=0, second=0, microsecond=0
+        ) + timedelta(days=1)
+        scheduler = BackupScheduler(backup, 86400, next_run_at=anchor)
+
+        await scheduler.run_once()
+        await scheduler.run_once(automatic=True)
+
+        assert scheduler.next_run == anchor

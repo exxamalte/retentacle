@@ -36,6 +36,9 @@ class BackupScheduler:
         self._progress_lock = threading.Lock()
         self._reschedule = asyncio.Event()
         self._next_run_at = next_run_at if self.enabled else None
+        # Grid origin that keeps runs at the chosen wall-clock time even when
+        # one runs late or after downtime; None until the first run fixes it.
+        self._anchor_at: datetime | None = self._next_run_at
         self._pending_runs = 0
         self.last_run: datetime | None = None
         self.last_error: str | None = None
@@ -122,6 +125,9 @@ class BackupScheduler:
         self._interval = float(interval)
         self._enabled = bool(enabled)
         self._next_run_at = next_run_at if self.enabled else None
+        if self.enabled:
+            # A user-selected date and time defines the new grid origin.
+            self._anchor_at = next_run_at
         if not self.enabled:
             # The run loop, if active, waits for automatic backups to be
             # enabled again. Do not cancel a backup that may currently be
@@ -242,6 +248,27 @@ class BackupScheduler:
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Unable to save the next backup time")
 
+    def _next_after_run(self, scheduled: datetime | None) -> datetime:
+        """Return the next run on the fixed schedule grid.
+
+        The grid origin is the user-selected date and time (or the slot of
+        the first run when none was ever chosen). Late completions and
+        catch-up runs move to the next grid slot instead of shifting the
+        whole schedule to the completion time, so a backup configured for
+        3am keeps running at 3am.
+        """
+        now = datetime.now(UTC)
+        interval = self._interval if self._interval > 0 else 3600
+        anchor = self._anchor_at or scheduled or now
+        elapsed = (now - anchor).total_seconds()
+        steps = max(1, int(elapsed // interval) + 1)
+        candidate = anchor + timedelta(seconds=steps * interval)
+        if candidate <= now:
+            candidate += timedelta(seconds=interval)
+        # Fix the grid origin so subsequent runs stay on the same slots.
+        self._anchor_at = anchor
+        return candidate
+
     async def _wait_for_next_run(self) -> None:
         """Wait until the next backup is due or the schedule changes."""
         while True:
@@ -275,6 +302,4 @@ class BackupScheduler:
                 # The schedule changed while the backup was running. Keep the
                 # user's new next-run selection.
                 continue
-            self._update_next_run(
-                (self.last_run or datetime.now(UTC)) + timedelta(seconds=self._interval)
-            )
+            self._update_next_run(self._next_after_run(scheduled_next_run))
