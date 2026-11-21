@@ -7,6 +7,7 @@ configuration (with credential values masked), and provides a ready-to-run
 curl command for the manual restore.
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
 import json
 import re
@@ -185,7 +186,6 @@ def recovery_for(record: dict) -> RecoveryData:
     ip_address = str(record.get("ip_address") or "device")
     doc_id = record.get("doc_id")
     filename = f"restore-{ip_address}-{doc_id}.json"
-
     configuration = settings.get("configuration")
     if isinstance(configuration, dict) and configuration:
         kind = "setconfig"
@@ -222,3 +222,92 @@ def recovery_for(record: dict) -> RecoveryData:
         command=command,
         restore_filename=filename,
     )
+
+
+_COMPONENT_NAMES = {
+    "switch": ("switch", "switches"),
+    "light": ("light", "lights"),
+    "input": ("input", "inputs"),
+    "cover": ("cover", "covers"),
+    "fan": ("fan", "fans"),
+    "out": ("output", "outputs"),
+    "pm": ("power meter", "power meters"),
+    "th": ("climate sensor", "climate sensors"),
+    "sensor": ("sensor", "sensors"),
+    "binary_sensor": ("binary sensor", "binary sensors"),
+    "enum": ("enum", "enums"),
+}
+
+# Gen 1 app profiles keep components as plain lists.
+_GEN1_LIST_COMPONENTS = {
+    "switches": ("switch", "switches"),
+    "sensors": ("sensor", "sensors"),
+}
+
+_COMPONENT_KEY_PATTERN = re.compile(r"^([a-z][a-z_]*)[:/]\d+$")
+
+
+def _restorable_config(record: dict) -> dict:
+    """Return the restorable configuration of a record, if any."""
+    settings = record.get("settings")
+    if not isinstance(settings, dict):
+        return {}
+    for key in ("configuration", "settings"):
+        value = settings.get(key)
+        if isinstance(value, dict) and value:
+            return value
+    return {}
+
+
+def _component_counts(config: dict) -> list[str]:
+    """Summarize configured components such as '2 switches'."""
+    counts = Counter(
+        match.group(1)
+        for key in config
+        if (match := _COMPONENT_KEY_PATTERN.match(str(key)))
+    )
+    chips = []
+    for base, count in sorted(counts.items()):
+        singular, plural = _COMPONENT_NAMES.get(base, (base, f"{base}s"))
+        chips.append(f"{count} {plural if count > 1 else singular}")
+    for key, (singular, plural) in _GEN1_LIST_COMPONENTS.items():
+        value = config.get(key)
+        if isinstance(value, list) and value:
+            label = plural if len(value) > 1 else singular
+            chips.append(f"{len(value)} {label}")
+    return chips
+
+
+def _wifi_ssid(config: dict) -> str | None:
+    """Return the configured station SSID for either generation."""
+    wifi = config.get("wifi")
+    if isinstance(wifi, dict) and isinstance(wifi.get("sta"), dict):
+        ssid = wifi["sta"].get("ssid")
+        if isinstance(ssid, str) and ssid:
+            return ssid
+    sta = config.get("wifi_sta")
+    if isinstance(sta, dict):
+        ssid = sta.get("ssid")
+        if isinstance(ssid, str) and ssid:
+            return ssid
+    return None
+
+
+def backup_highlights(record: dict) -> list[str]:
+    """Return short summary chips describing a backup's configuration."""
+    config = _restorable_config(record)
+    if not config:
+        return []
+    chips: list[str] = []
+    ssid = _wifi_ssid(config)
+    if ssid:
+        chips.append(f"Wi-Fi: {ssid}")
+    mqtt = config.get("mqtt")
+    if isinstance(mqtt, dict) and mqtt.get("enable"):
+        chips.append("MQTT")
+    chips.extend(_component_counts(config))
+    info = record.get("device_info")
+    firmware = info.get("fw") or info.get("ver") if isinstance(info, dict) else None
+    if isinstance(firmware, str) and firmware:
+        chips.append(f"fw {firmware.split('/')[0]}")
+    return chips

@@ -163,7 +163,7 @@ server — your device backups remain untouched.
 ### Web UI
 
 * `/` - devices overview with scheduler status, backup counts, last backup times, and per-device indicators for automatic backups and recent backups.
-* `/devices/<ip-address>` - all backups for one device, newest first, plus a link to the device web UI.
+* `/devices/<ip-address>` - all backups for one device, newest first, with per-backup configuration chips, an "unchanged" marker for identical configs, plus links to the device web UI and to restoring the latest backup.
 * `/backups/<id>` - metadata, a manual restore section, a configuration summary, the device state at backup time, and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
 * `/backups/<id>/restore.json` - download only the restorable configuration, ready for `Shelly.SetConfig` (Gen 2/3) or `POST /settings` (Gen 1).
@@ -192,11 +192,14 @@ around a fast manual restore. Every backup is triaged into three zones:
 3. **Device state** — the live `status` (and Gen 1 `actions`) recorded at
    backup time, collapsed and marked *information only — never restored*.
 
-Typical flow after losing a device: prepare the replacement (factory
-reset, join the network) → open the newest good backup → download the
-restore JSON → run the shown command → take a fresh backup in Retentacle
-to verify. Model, MAC and firmware are shown for reference only; they
-never appear in a restore payload.
+Typical flow after losing a device: open the device history and find the
+last backup before the unwanted change — the list shows each backup's Wi-Fi
+SSID, MQTT state, component counts and firmware as chips, and collapses rows
+whose configuration matches the newer one to "unchanged" — then hit
+**Restore latest** or open the chosen backup, download the restore JSON,
+adjust the IP in the shown command and run it, and take a fresh backup in
+Retentacle to verify. Model, MAC and firmware are shown for reference only;
+they never appear in a restore payload.
 
 A **Run backup now** button is available on every page. It backs up the devices
 configured on the Settings page. If no devices are configured there, it backs up

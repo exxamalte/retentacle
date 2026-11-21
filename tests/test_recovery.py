@@ -1,6 +1,6 @@
 """Tests for the recovery classification module."""
 
-from retentacle.recovery import recovery_for
+from retentacle.recovery import backup_highlights, recovery_for
 
 _GEN2_RECORD = {
     "doc_id": 7,
@@ -177,3 +177,80 @@ class TestUnknownRecords:
         recovery = recovery_for({"doc_id": 1, "ip_address": "10.0.0.1"})
 
         assert recovery.restorable is False
+
+
+class TestHighlights:
+    """Tests for the per-backup summary chips."""
+
+    def test_generation_2_chips(self):
+        """Test chips for Wi-Fi, MQTT, components and firmware."""
+        record = {
+            "device_info": {"fw": "20260101-120000/1.4.4"},
+            "settings": {
+                "configuration": {
+                    "wifi": {"sta": {"ssid": "HomeNet"}},
+                    "mqtt": {"enable": True},
+                    "switch:0": {},
+                    "switch:1": {},
+                    "light:0": {},
+                    "th:0": {},
+                },
+                "status": {},
+            },
+        }
+
+        assert backup_highlights(record) == [
+            "Wi-Fi: HomeNet",
+            "MQTT",
+            "1 light",
+            "2 switches",
+            "1 climate sensor",
+            "fw 20260101-120000",
+        ]
+
+    def test_generation_1_chips(self):
+        """Test Gen 1 SSID and list-based component counts."""
+        record = {
+            "device_info": {"ver": "1.14.0"},
+            "settings": {
+                "settings": {
+                    "wifi_sta": {"ssid": "HomeNet"},
+                    "switches": [{"name": "A"}, {"name": "B"}],
+                },
+                "status": {},
+            },
+        }
+
+        assert backup_highlights(record) == [
+            "Wi-Fi: HomeNet",
+            "2 switches",
+            "fw 1.14.0",
+        ]
+
+    def test_firmware_prefers_fw_over_ver(self):
+        """Test that generation 2 firmware strings drop the build suffix."""
+        record = {
+            "device_info": {"fw": "20260101-120000/1.4.4", "ver": "ignored"},
+            "settings": {"configuration": {"sys": {}}},
+        }
+
+        assert backup_highlights(record) == ["fw 20260101-120000"]
+
+    def test_unknown_or_empty_config(self):
+        """Test that records without a configuration yield no chips."""
+        assert backup_highlights({"settings": {"unexpected": {}}}) == []
+        assert backup_highlights({}) == []
+
+    def test_broken_config_values_do_not_crash(self):
+        """Test that malformed section values are ignored gracefully."""
+        record = {
+            "settings": {
+                "configuration": {
+                    "wifi": "not-a-dict",
+                    "mqtt": "not-a-dict",
+                    "switch:0": {},
+                }
+            }
+        }
+
+        assert backup_highlights(record) == ["1 switch"]

@@ -3228,3 +3228,56 @@ class TestRecoveryView:
             _login(client, "guest@example.com", "viewer-password-1")
 
             assert client.get(f"/backups/{doc_id}/restore.json").status_code == 200
+
+    def test_device_page_shows_chips_and_restore_latest(self):
+        """Test the history page summarizes configs and links to a restore."""
+        older = self._gen2_record()
+        older["timestamp"] = "2026-11-14T10:00:00+00:00"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir, records=[self._gen2_record(), older, _record()]
+            )
+            doc_ids = [r["doc_id"] for r in store.all()]
+            with _client(app) as client:
+                text = client.get("/devices/192.168.10.20").text
+
+        assert f'href="/backups/{doc_ids[0]}#manual-restore"' in text
+        assert "Restore latest" in text
+        assert "Wi-Fi: HomeNet" in text
+        assert "MQTT" in text
+
+    def test_device_page_collapses_unchanged_backups(self):
+        """Test identical configurations collapse to one chip set."""
+        first = self._gen2_record()
+        second = self._gen2_record()
+        second["timestamp"] = "2026-11-14T10:00:00+00:00"
+        changed = self._gen2_record()
+        changed["timestamp"] = "2026-11-13T10:00:00+00:00"
+        changed["settings"]["configuration"]["mqtt"]["enable"] = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[first, second, changed])
+            with _client(app) as client:
+                text = client.get("/devices/192.168.10.20").text
+
+        assert text.count("Wi-Fi: HomeNet") == 2
+        assert text.count(">unchanged<") == 1
+
+    def test_device_page_marks_unrecognizable_backups(self):
+        """Test records without a config payload show a neutral dash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                text = client.get("/devices/192.168.1.10").text
+
+        assert ">unchanged<" not in text
+        assert "config-summary-cell" in text
+
+    def test_backup_page_restore_card_anchor(self):
+        """Test the restore card can be linked to directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                text = client.get(f"/backups/{doc_id}").text
+
+        assert 'id="manual-restore"' in text

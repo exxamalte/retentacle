@@ -70,7 +70,7 @@
   </section>
 
   {% if recovery.restorable %}
-    <section class="card" aria-label="Manual restore">
+    <section class="card" id="manual-restore" aria-label="Manual restore">
       <h2>Manual restore</h2>
       <p class="subtitle">
         <span class="badge">{{ recovery.kind_label }}</span>
@@ -113,7 +113,7 @@
       </p>
     </section>
   {% else %}
-    <section class="card" aria-label="Manual restore">
+    <section class="card" id="manual-restore" aria-label="Manual restore">
       <h2>Manual restore</h2>
       <p class="field-help">
         This backup does not contain a recognizable configuration payload,

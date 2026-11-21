@@ -45,7 +45,7 @@ from .oidc import (
     discover_endpoints,
     oidc_config_from_settings,
 )
-from .recovery import recovery_for
+from .recovery import backup_highlights, recovery_for
 from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
@@ -1039,6 +1039,20 @@ def _register_settings_routes(
     _register_user_detail_settings_routes(app, configuration, store, scheduler)
 
 
+def _backup_summaries(backups: list[dict]) -> list[dict]:
+    """Build per-backup summary chips, collapsing rows identical to newer ones."""
+    summaries: list[dict] = []
+    previous: list[str] | None = None
+    for record in backups:
+        chips = backup_highlights(record)
+        if previous is not None and chips == previous:
+            summaries.append({"state": "unchanged", "chips": []})
+        else:
+            summaries.append({"state": "chips" if chips else "none", "chips": chips})
+        previous = chips
+    return summaries
+
+
 def _register_backup_download_routes(app: FastAPI, store: BackupStore) -> None:
     """Register the raw snapshot and restore configuration download routes."""
 
@@ -1111,6 +1125,7 @@ def _register_routes(
                 "ip_address": ip_address,
                 "display_name": device_display_name(latest),
                 "backups": backups,
+                "summaries": _backup_summaries(backups),
                 "web_url": _device_web_url(ip_address),
             },
         )

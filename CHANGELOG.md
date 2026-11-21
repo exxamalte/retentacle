@@ -3,6 +3,7 @@
 ## 2026.5.0
 * Present backups in restore-oriented zones: restorable configuration, masked settings summary, and clearly separated live state.
 * Offer a ready-to-run manual restore command and a dedicated `restore.json` download per backup.
+* Summarize each backup on the device history page with configuration chips, mark unchanged configs, and add a "Restore latest" shortcut.
 * Rename the application to Retentacle.
 * Show the tagline "Tentacles for your Shelly backups." under the name in the header.
 * Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
