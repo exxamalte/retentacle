@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Compare - {{ application_name }}{% endblock %}
+
+{% block content %}
+  <p class="breadcrumb">
+    <a href="/">Devices</a> /
+    <a href="/devices/{{ ip_address }}">{{ display_name }}</a> /
+    <span>Compare</span>
+  </p>
+
+  <div class="page-header">
+    <div>
+      <h1>Compare configurations</h1>
+      <p class="subtitle">
+        Restorable settings only — live device state is never included.
+      </p>
+    </div>
+  </div>
+
+  <section class="card" aria-label="Backup selection">
+    <form method="get" action="/devices/{{ ip_address }}/compare" class="device-form">
+      <div class="form-grid">
+        <div class="form-field">
+          <label for="a">Baseline backup</label>
+          <select class="input" id="a" name="a">
+            {% for backup in backups %}
+              <option
+                value="{{ backup.doc_id }}"
+                {% if backup.doc_id == left.doc_id %}selected{% endif %}
+              >{{ backup.timestamp|format_timestamp }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="b">Compare against</label>
+          <select class="input" id="b" name="b">
+            {% for backup in backups %}
+              <option
+                value="{{ backup.doc_id }}"
+                {% if backup.doc_id == right.doc_id %}selected{% endif %}
+              >{{ backup.timestamp|format_timestamp }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Compare</button>
+      </div>
+    </form>
+  </section>
+
+  {% if not comparable %}
+    <div class="notice" role="status">
+      Neither of the selected backups has a recognizable configuration, so
+      there is nothing to compare.
+    </div>
+  {% elif diff.identical %}
+    <div class="notice" role="status">
+      These backups have identical configurations.
+    </div>
+  {% else %}
+    <p class="badge-list" style="margin-bottom: 1.25rem;">
+      {% if diff.changed %}<span class="badge">{{ diff.changed|length }} changed</span>{% endif %}
+      {% if diff.added %}<span class="badge success">{{ diff.added|length }} added</span>{% endif %}
+      {% if diff.removed %}<span class="badge warning">{{ diff.removed|length }} removed</span>{% endif %}
+    </p>
+
+    {% if diff.changed %}
+      <section class="card" aria-label="Changed settings">
+        <h2>Changed</h2>
+        <div class="table-wrap">
+          <table class="config-table diff-table">
+            <colgroup>
+              <col class="config-path-col">
+              <col class="config-value-col">
+              <col class="config-value-col">
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">Setting</th>
+                <th scope="col">Was ({{ left.timestamp|format_timestamp }})</th>
+                <th scope="col">Now ({{ right.timestamp|format_timestamp }})</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for change in diff.changed %}
+                <tr>
+                  <td class="mono config-path">{{ change.path }}</td>
+                  <td class="mono diff-old">{{ change.old }}</td>
+                  <td class="mono diff-new">{{ change.new }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+
+    {% if diff.added %}
+      <section class="card" aria-label="Added settings">
+        <h2>Added</h2>
+        <div class="table-wrap">
+          <table class="config-table">
+            <colgroup>
+              <col class="config-path-col">
+              <col class="config-value-col">
+            </colgroup>
+            <tbody>
+              {% for item in diff.added %}
+                <tr>
+                  <td class="mono config-path">{{ item.path }}</td>
+                  <td class="mono diff-new">{{ item.value }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+
+    {% if diff.removed %}
+      <section class="card" aria-label="Removed settings">
+        <h2>Removed</h2>
+        <div class="table-wrap">
+          <table class="config-table">
+            <colgroup>
+              <col class="config-path-col">
+              <col class="config-value-col">
+            </colgroup>
+            <tbody>
+              {% for item in diff.removed %}
+                <tr>
+                  <td class="mono config-path">{{ item.path }}</td>
+                  <td class="mono diff-old">{{ item.value }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}
