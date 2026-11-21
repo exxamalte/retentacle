@@ -16,7 +16,7 @@
         {{ display_name }} &middot; <span class="mono">{{ backup.ip_address }}</span>
       </p>
     </div>
-    <a class="button primary" href="/backups/{{ backup.doc_id }}/download">Download JSON</a>
+    <a class="button primary" href="/backups/{{ backup.doc_id }}/download">Download full snapshot</a>
   </div>
 
   <section class="card" aria-label="Backup metadata">
@@ -33,6 +33,25 @@
         <dt>Generation</dt>
         <dd>{{ backup.get('generation', '?') }}</dd>
       </div>
+      {% set info = backup.get('device_info') or {} %}
+      {% if info.get('model') or info.get('type') or info.get('app') %}
+        <div>
+          <dt>Model at backup time</dt>
+          <dd>{{ info.get('model') or info.get('type') or info.get('app') }}</dd>
+        </div>
+      {% endif %}
+      {% if info.get('mac') %}
+        <div>
+          <dt>MAC address</dt>
+          <dd class="mono">{{ info.get('mac') }}</dd>
+        </div>
+      {% endif %}
+      {% if info.get('fw') or info.get('ver') %}
+        <div>
+          <dt>Firmware</dt>
+          <dd>{{ info.get('fw') or info.get('ver') }}</dd>
+        </div>
+      {% endif %}
       <div>
         <dt>Backup ID</dt>
         <dd>#{{ backup.doc_id }}</dd>
@@ -42,10 +61,170 @@
         <dd>{{ backup.timestamp|format_timestamp }}</dd>
       </div>
     </dl>
+    {% if info.get('mac') %}
+      <p class="field-help">
+        Model, MAC and firmware are information only — a replacement device
+        will have different values, and none of them are part of a restore.
+      </p>
+    {% endif %}
   </section>
+
+  {% if recovery.restorable %}
+    <section class="card" aria-label="Manual restore">
+      <h2>Manual restore</h2>
+      <p class="subtitle">
+        <span class="badge">{{ recovery.kind_label }}</span>
+      </p>
+      <p class="field-help">
+        Retentacle cannot push settings to a device by itself. On a
+        replacement or factory-reset device, apply the configuration payload
+        below manually.
+      </p>
+
+      <ol class="restore-steps">
+        <li>Prepare the device: factory-reset it or use a replacement, and join it to your network.</li>
+        <li>Copy or download the restore JSON (it contains only settings, no live state).</li>
+        <li>Run the command below on a machine in the same network — adjust the IP address if needed.</li>
+        <li>Restart the device if required, then take a fresh backup in Retentacle to verify.</li>
+      </ol>
+
+      <div class="form-field">
+        <label for="restore-command">Restore command</label>
+        <div class="row-actions">
+          <input
+            class="input mono"
+            id="restore-command"
+            value="{{ recovery.command }}"
+            spellcheck="false"
+            autocomplete="off"
+          >
+          <button class="button small" type="button" data-copy-target="restore-command">Copy command</button>
+        </div>
+        <p class="field-help">Uses curl and the downloaded restore file; run it next to the file.</p>
+      </div>
+
+      <div class="form-actions">
+        <button class="button primary" type="button" data-copy-target="restore-payload">Copy restore JSON</button>
+        <a class="button" href="/backups/{{ backup.doc_id }}/restore.json">Download restore JSON</a>
+      </div>
+      <p class="field-help">
+        Credential values such as Wi-Fi, MQTT or KNX keys are masked in the
+        summary below, but they are included in the copy and download.
+      </p>
+    </section>
+  {% else %}
+    <section class="card" aria-label="Manual restore">
+      <h2>Manual restore</h2>
+      <p class="field-help">
+        This backup does not contain a recognizable configuration payload,
+        so a prepared restore is not available. The raw data below is still
+        archived.
+      </p>
+    </section>
+  {% endif %}
+
+  {% if recovery.groups %}
+    <section class="card" aria-label="Configuration summary">
+      <h2>Configuration</h2>
+      <p class="field-help">
+        The restorable settings of this backup, grouped by device section.
+      </p>
+      {% for group in recovery.groups %}
+        <div class="config-group">
+          <h3>{{ group.label }}</h3>
+          <div class="table-wrap">
+            <table>
+              <tbody>
+                {% for item in group.items %}
+                  <tr>
+                    <td class="mono">{{ item.path }}</td>
+                    <td class="mono">
+                      {{ item.value }}
+                      {% if item.masked %}
+                        <span class="badge muted" title="Included in the restore payload">in payload</span>
+                      {% else %}
+                        <button
+                          class="button small"
+                          type="button"
+                          data-copy-value="{{ item.value }}"
+                          title="Copy value"
+                          aria-label="Copy value for {{ item.path }}"
+                        >⧉</button>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endfor %}
+    </section>
+  {% endif %}
+
+  {% if recovery.state %}
+    <details class="card" aria-label="Device state at backup time">
+      <summary>
+        Device state at backup time
+        <span class="badge muted" title="Live values such as temperatures, power meters and uptimes">information only — never restored</span>
+      </summary>
+      <pre>{{ recovery.state_json }}</pre>
+    </details>
+  {% endif %}
 
   <section class="card json-card" aria-label="Raw backup data">
     <h2>Raw backup data</h2>
     <pre>{{ pretty_json }}</pre>
   </section>
+{% endblock %}
+
+{% block scripts %}
+  {% if recovery.restorable %}
+    <script type="application/json" id="restore-payload">{{ recovery.config | tojson }}</script>
+    <script>
+      (() => {
+        async function copyText(text) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return true;
+          } catch (error) {
+            const area = document.createElement("textarea");
+            area.value = text;
+            document.body.appendChild(area);
+            area.select();
+            const copied = document.execCommand("copy");
+            area.remove();
+            return copied;
+          }
+        }
+
+        function flash(button) {
+          const label = button.textContent;
+          button.textContent = "Copied!";
+          window.setTimeout(() => { button.textContent = label; }, 1200);
+        }
+
+        document.querySelectorAll("[data-copy-target]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            const source = document.getElementById(button.dataset.copyTarget);
+            if (!source) {
+              return;
+            }
+            const text = "value" in source ? source.value : source.textContent;
+            if (await copyText(text)) {
+              flash(button);
+            }
+          });
+        });
+
+        document.querySelectorAll("[data-copy-value]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            if (await copyText(button.dataset.copyValue)) {
+              flash(button);
+            }
+          });
+        });
+      })();
+    </script>
+  {% endif %}
 {% endblock %}

@@ -735,7 +735,7 @@ class TestServer:
         assert response.status_code == 200
         assert "Kitchen" in response.text
         assert "settings" in response.text
-        assert "Download JSON" in response.text
+        assert "Download full snapshot" in response.text
         assert "Raw backup data" in response.text
         assert "Backup ID" in response.text
         assert f"#{doc_id}" in response.text
@@ -3097,3 +3097,134 @@ class TestUserMenu:
 
                 assert response.status_code == 303
                 assert app.state.users.get_user_by_email(_ADMIN_EMAIL).picture is None
+
+
+class TestRecoveryView:
+    """Tests for the user-friendly backup and restore view."""
+
+    def _gen2_record(self):
+        return {
+            "ip_address": "192.168.10.20",
+            "timestamp": "2026-11-15T10:00:00+00:00",
+            "generation": 2,
+            "device_info": {
+                "gen": 2,
+                "model": "Plus1PM",
+                "mac": "AC:12:3F:11:22:33",
+                "fw": "20260101-120000/v1",
+            },
+            "settings": {
+                "configuration": {
+                    "sys": {"device": {"name": "Kitchen"}},
+                    "wifi": {"sta": {"ssid": "HomeNet", "psk": "super-wifi-pass"}},
+                    "mqtt": {"enable": True, "password": "super-mqtt-pass"},
+                },
+                "device_info": {"mac": "AC:12:3F:11:22:33", "uptime": 400},
+                "status": {"switch:0": {"output": True, "power": 12.4}},
+            },
+        }
+
+    def test_backup_page_shows_restore_sections(self):
+        """Test the backup page groups config, masks secrets and flags state."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                text = client.get(f"/backups/{doc_id}").text
+
+        assert "Manual restore" in text
+        assert "Shelly.SetConfig" in text
+        assert "restore-192.168.10.20-" in text
+        assert "Copy restore JSON" in text
+        assert 'id="restore-payload"' in text
+        assert "Wi-Fi" in text
+        summary = text.split('aria-label="Configuration summary"')[1].split(
+            "</section>"
+        )[0]
+        assert "super-wifi-pass" not in summary
+        assert "super-mqtt-pass" not in summary
+        assert "••••••••" in summary
+        assert "never restored" in text
+
+    def test_backup_page_shows_identity_info(self):
+        """Test model, MAC and firmware are surfaced as information only."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                text = client.get(f"/backups/{doc_id}").text
+
+        assert "Plus1PM" in text
+        assert "AC:12:3F:11:22:33" in text
+        assert "a replacement device" in text
+
+    def test_restore_json_download(self):
+        """Test the restore download contains exactly the configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                response = client.get(f"/backups/{doc_id}/restore.json")
+
+        assert response.status_code == 200
+        assert response.json() == self._gen2_record()["settings"]["configuration"]
+        assert (
+            f'filename="restore-192.168.10.20-{doc_id}.json"'
+            in (response.headers["content-disposition"])
+        )
+
+    def test_restore_json_missing_for_unrecognized_backup(self):
+        """Test records without a config payload have no restore download."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                response = client.get(f"/backups/{doc_id}/restore.json")
+
+                assert response.status_code == 404
+
+    def test_backup_page_handles_unrecognized_backup(self):
+        """Test the restore view degrades gracefully for odd records."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                text = client.get(f"/backups/{doc_id}").text
+
+        assert "does not contain a recognizable configuration payload" in text
+
+    def test_gen1_restore_command(self):
+        """Test generation 1 backups use the settings endpoint."""
+        record = {
+            "ip_address": "192.168.10.11",
+            "timestamp": "2026-11-15T10:00:00+00:00",
+            "generation": 1,
+            "device_info": {"type": "SHSW-1", "mac": "ABC123"},
+            "settings": {
+                "settings": {"device": {"name": "Office"}},
+                "actions": [{"id": 0}],
+                "status": {"input": [0]},
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[record])
+            doc_id = store.all()[0]["doc_id"]
+            with _client(app) as client:
+                page = client.get(f"/backups/{doc_id}").text
+                download = client.get(f"/backups/{doc_id}/restore.json")
+
+        assert "curl -sS -X POST &#34;http://192.168.10.11/settings&#34;" in page
+        assert download.json() == {"device": {"name": "Office"}}
+
+    def test_viewer_can_download_restore_config(self):
+        """Test read-only accounts may download the restore payload."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[self._gen2_record()])
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            doc_id = store.all()[0]["doc_id"]
+            client = TestClient(app)
+            _login(client, "guest@example.com", "viewer-password-1")
+
+            assert client.get(f"/backups/{doc_id}/restore.json").status_code == 200

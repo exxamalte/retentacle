@@ -45,6 +45,7 @@ from .oidc import (
     discover_endpoints,
     oidc_config_from_settings,
 )
+from .recovery import recovery_for
 from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
@@ -1038,6 +1039,41 @@ def _register_settings_routes(
     _register_user_detail_settings_routes(app, configuration, store, scheduler)
 
 
+def _register_backup_download_routes(app: FastAPI, store: BackupStore) -> None:
+    """Register the raw snapshot and restore configuration download routes."""
+
+    @app.get("/backups/{doc_id}/restore.json")
+    async def download_restore_config(doc_id: int):
+        """Download only the restorable configuration of a backup."""
+        record = store.get(doc_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        recovery = recovery_for(record)
+        if not recovery.restorable:
+            raise HTTPException(
+                status_code=404,
+                detail="This backup does not contain a restorable configuration",
+            )
+        return JSONResponse(
+            content=recovery.config,
+            headers={
+                "Content-Disposition": f'attachment; filename="{recovery.restore_filename}"'
+            },
+        )
+
+    @app.get("/backups/{doc_id}/download")
+    async def download_backup(doc_id: int):
+        """Download a single backup as JSON."""
+        record = store.get(doc_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        filename = f"retentacle-{record.get('ip_address', 'device')}-{doc_id}.json"
+        return JSONResponse(
+            content=record,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+
 def _register_routes(
     app: FastAPI,
     configuration: Configuration,
@@ -1094,21 +1130,11 @@ def _register_routes(
                 "backup": record,
                 "display_name": device_display_name(record),
                 "pretty_json": json.dumps(record, indent=2, sort_keys=True),
+                "recovery": recovery_for(record),
             },
         )
 
-    @app.get("/backups/{doc_id}/download")
-    async def download_backup(doc_id: int):
-        """Download a single backup as JSON."""
-        record = store.get(doc_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="Backup not found")
-        filename = f"retentacle-{record.get('ip_address', 'device')}-{doc_id}.json"
-        return JSONResponse(
-            content=record,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
-
+    _register_backup_download_routes(app, store)
     _register_backup_routes(app, store, scheduler)
     _register_settings_routes(app, configuration, store, scheduler)
 
