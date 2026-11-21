@@ -1,6 +1,6 @@
 """Tests for the recovery classification module."""
 
-from retentacle.recovery import backup_highlights, recovery_for
+from retentacle.recovery import backup_highlights, compare_configs, recovery_for
 
 _GEN2_RECORD = {
     "doc_id": 7,
@@ -254,3 +254,69 @@ class TestHighlights:
         }
 
         assert backup_highlights(record) == ["1 switch"]
+
+
+class TestCompareConfigs:
+    """Tests for the configuration diff between two backups."""
+
+    def test_added_removed_changed(self):
+        """Test the three diff zones are detected and sorted."""
+        left = {
+            "mqtt": {"enable": True, "server": "mqtt://a"},
+            "wifi": {"sta": {"ssid": "OldNet"}},
+        }
+        right = {
+            "mqtt": {"enable": True},
+            "wifi": {"sta": {"ssid": "NewNet"}},
+            "switch:0": {"name": "A"},
+        }
+
+        diff = compare_configs(left, right)
+
+        assert diff["identical"] is False
+        assert [item.path for item in diff["added"]] == ["switch:0.name"]
+        assert [item.path for item in diff["removed"]] == ["mqtt.server"]
+        assert [(c.path, c.old, c.new) for c in diff["changed"]] == [
+            ("wifi.sta.ssid", "OldNet", "NewNet")
+        ]
+
+    def test_identical_configs(self):
+        """Test that equal configurations report no differences."""
+        config = {"sys": {"device": {"name": "X"}}}
+
+        diff = compare_configs(config, dict(config))
+
+        assert diff["identical"] is True
+        assert (diff["changed"], diff["added"], diff["removed"]) == ([], [], [])
+
+    def test_empty_configs_are_identical(self):
+        """Test that comparing nothing against nothing is identical."""
+        assert compare_configs({}, {})["identical"] is True
+
+    def test_secret_changes_are_detected_but_masked(self):
+        """Test credential diffs show as changed without leaking values."""
+        diff = compare_configs(
+            {"wifi": {"sta": {"psk": "old-password"}}},
+            {"wifi": {"sta": {"psk": "new-password"}}},
+        )
+
+        assert len(diff["changed"]) == 1
+        change = diff["changed"][0]
+        assert change.old == "••••••••"
+        assert change.new == "••••••••"
+        assert "password" not in change.old + change.new
+
+    def test_unchanged_secret_is_not_reported(self):
+        """Test identical credentials do not appear as a change."""
+        diff = compare_configs(
+            {"mqtt": {"password": "same"}},
+            {"mqtt": {"password": "same"}},
+        )
+
+        assert diff["identical"] is True
+
+    def test_unset_values_render_placeholder(self):
+        """Test removed empty leaves render as a dash."""
+        diff = compare_configs({"sys": {"debug": None}}, {})
+
+        assert [item.value for item in diff["removed"]] == ["—"]

@@ -45,7 +45,12 @@ from .oidc import (
     discover_endpoints,
     oidc_config_from_settings,
 )
-from .recovery import backup_highlights, recovery_for
+from .recovery import (
+    backup_highlights,
+    compare_configs,
+    recovery_for,
+    restorable_config,
+)
 from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
@@ -1053,6 +1058,56 @@ def _backup_summaries(backups: list[dict]) -> list[dict]:
     return summaries
 
 
+def _parse_doc_id(value: str | None, default: int) -> int:
+    """Return the requested backup identifier, or the default."""
+    if value is None or not value.strip():
+        return default
+    return int(value)
+
+
+def _register_device_compare_route(app: FastAPI, store: BackupStore) -> None:
+    """Register the route comparing the configurations of two backups."""
+
+    @app.get("/devices/{ip_address}/compare", response_class=HTMLResponse)
+    async def compare_backups(request: Request, ip_address: str):
+        """Compare the restorable configuration of two backups of a device."""
+        backups = store.by_device(ip_address)
+        if not backups:
+            raise HTTPException(status_code=404, detail="Device not found")
+        records = dict(
+            zip((int(b.get("doc_id", 0)) for b in backups), backups, strict=True)
+        )
+        default_ids = list(records)
+        left_id = default_ids[1] if len(default_ids) > 1 else default_ids[0]
+        right_id = default_ids[0]
+        try:
+            left_id = _parse_doc_id(request.query_params.get("a"), left_id)
+            right_id = _parse_doc_id(request.query_params.get("b"), right_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="Backup identifiers must be numbers"
+            ) from exc
+        left = records.get(left_id)
+        right = records.get(right_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        config_left = restorable_config(left)
+        config_right = restorable_config(right)
+        return templates.TemplateResponse(
+            request=request,
+            name="compare.html",
+            context={
+                "ip_address": ip_address,
+                "display_name": device_display_name(right),
+                "backups": backups,
+                "left": left,
+                "right": right,
+                "diff": compare_configs(config_left, config_right),
+                "comparable": bool(config_left or config_right),
+            },
+        )
+
+
 def _register_backup_download_routes(app: FastAPI, store: BackupStore) -> None:
     """Register the raw snapshot and restore configuration download routes."""
 
@@ -1150,6 +1205,7 @@ def _register_routes(
         )
 
     _register_backup_download_routes(app, store)
+    _register_device_compare_route(app, store)
     _register_backup_routes(app, store, scheduler)
     _register_settings_routes(app, configuration, store, scheduler)
 

@@ -247,7 +247,7 @@ _GEN1_LIST_COMPONENTS = {
 _COMPONENT_KEY_PATTERN = re.compile(r"^([a-z][a-z_]*)[:/]\d+$")
 
 
-def _restorable_config(record: dict) -> dict:
+def restorable_config(record: dict) -> dict:
     """Return the restorable configuration of a record, if any."""
     settings = record.get("settings")
     if not isinstance(settings, dict):
@@ -295,7 +295,7 @@ def _wifi_ssid(config: dict) -> str | None:
 
 def backup_highlights(record: dict) -> list[str]:
     """Return short summary chips describing a backup's configuration."""
-    config = _restorable_config(record)
+    config = restorable_config(record)
     if not config:
         return []
     chips: list[str] = []
@@ -311,3 +311,54 @@ def backup_highlights(record: dict) -> list[str]:
     if isinstance(firmware, str) and firmware:
         chips.append(f"fw {firmware.split('/')[0]}")
     return chips
+
+
+@dataclass(frozen=True)
+class ConfigChange:
+    """A configuration value that differs between two backups."""
+
+    path: str
+    old: str
+    new: str
+
+
+def _leaf_value(value: object, path: str) -> str:
+    """Return the display value for a diff leaf, masking secrets."""
+    if _is_secret(path):
+        return "••••••••"
+    display = _display_value(value)
+    return "—" if display is None else display
+
+
+def compare_configs(left: dict, right: dict) -> dict:
+    """Diff two configuration payloads by leaf, oldest on the left."""
+    leaves_left = dict(_flatten("", left))
+    leaves_right = dict(_flatten("", right))
+    added = [
+        ConfigItem(path, "", _leaf_value(leaves_right[path], path), _is_secret(path))
+        for path in sorted(leaves_right.keys() - leaves_left.keys())
+    ]
+    removed = [
+        ConfigItem(
+            path,
+            "",
+            _leaf_value(leaves_left[path], path),
+            _is_secret(path),
+        )
+        for path in sorted(leaves_left.keys() - leaves_right.keys())
+    ]
+    changed = [
+        ConfigChange(
+            path,
+            _leaf_value(leaves_left[path], path),
+            _leaf_value(leaves_right[path], path),
+        )
+        for path in sorted(leaves_left.keys() & leaves_right.keys())
+        if leaves_left[path] != leaves_right[path]
+    ]
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "identical": not (added or removed or changed),
+    }

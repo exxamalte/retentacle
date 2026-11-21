@@ -63,6 +63,7 @@
         <tbody>
           {% for backup in backups %}
             {% set summary = summaries[loop.index0] %}
+            {% set newer = backups[loop.index0 - 1] if loop.index0 > 0 %}
             <tr>
               <td>{{ backup.timestamp|format_timestamp }}</td>
               <td><span class="badge">Gen {{ backup.get('generation', '?') }}</span></td>
@@ -83,6 +84,19 @@
                 <div class="row-actions">
                   <a class="button small" href="/backups/{{ backup.doc_id }}">View</a>
                   <a class="button small" href="/backups/{{ backup.doc_id }}/download">Download</a>
+                  {% if newer %}
+                    <a
+                      class="button small"
+                      href="/devices/{{ ip_address }}/compare?a={{ backup.doc_id }}&amp;b={{ newer.doc_id }}"
+                      title="Show configuration changes since this backup"
+                    >Diff</a>
+                  {% elif backups|length > 1 %}
+                    <a
+                      class="button small"
+                      href="/devices/{{ ip_address }}/compare"
+                      title="Compare the two newest backups"
+                    >Diff</a>
+                  {% endif %}
                 </div>
               </td>
             </tr>

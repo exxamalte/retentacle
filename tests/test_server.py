@@ -3281,3 +3281,152 @@ class TestRecoveryView:
                 text = client.get(f"/backups/{doc_id}").text
 
         assert 'id="manual-restore"' in text
+
+
+class TestConfigCompare:
+    """Tests for the backup configuration comparison view."""
+
+    def _record(self, timestamp, mqtt_enable=True):
+        return {
+            "ip_address": "192.168.10.20",
+            "timestamp": timestamp,
+            "generation": 2,
+            "device_info": {"gen": 2, "name": "Kitchen"},
+            "settings": {
+                "configuration": {
+                    "sys": {"device": {"name": "Kitchen"}},
+                    "wifi": {"sta": {"ssid": "HomeNet", "psk": "hidden-pass"}},
+                    "mqtt": {"enable": mqtt_enable},
+                },
+                "status": {"sys": {"uptime": 1}},
+            },
+        }
+
+    def test_compare_defaults_to_latest_pair(self):
+        """Test the default view diffs the newest two backups."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-20T10:00:00+00:00", mqtt_enable=False),
+                    self._record("2026-11-21T10:00:00+00:00", mqtt_enable=True),
+                ],
+            )
+            with _client(app) as client:
+                response = client.get("/devices/192.168.10.20/compare")
+
+        assert response.status_code == 200
+        text = response.text
+        assert "Compare configurations" in text
+        assert "mqtt.enable" in text
+        assert "1 changed" in text
+        # live state must not leak into the diff
+        assert "uptime" not in text
+        assert "hidden-pass" not in text
+
+    def test_compare_identical_backups(self):
+        """Test equal configurations report no differences."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-20T10:00:00+00:00"),
+                    self._record("2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            with _client(app) as client:
+                text = client.get("/devices/192.168.10.20/compare").text
+
+        assert "identical configurations" in text
+
+    def test_compare_specific_pair(self):
+        """Test explicit backup identifiers select the diff inputs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-19T10:00:00+00:00", mqtt_enable=False),
+                    self._record("2026-11-20T10:00:00+00:00"),
+                    self._record("2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            old_id = [
+                r["doc_id"]
+                for r in store.all()
+                if r["timestamp"].startswith("2026-11-19")
+            ][0]
+            new_id = [
+                r["doc_id"]
+                for r in store.all()
+                if r["timestamp"].startswith("2026-11-21")
+            ][0]
+            with _client(app) as client:
+                text = client.get(
+                    f"/devices/192.168.10.20/compare?a={old_id}&b={new_id}"
+                ).text
+
+        assert "1 changed" in text
+        assert "mqtt.enable" in text
+
+    def test_compare_rejects_unknown_backups(self):
+        """Test unknown or malformed backup identifiers are handled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir, records=[self._record("2026-11-21T10:00:00+00:00")]
+            )
+            with _client(app) as client:
+                base = "/devices/192.168.10.20/compare"
+
+                assert client.get(f"{base}?a=999").status_code == 404
+                assert client.get(f"{base}?a=abc").status_code == 400
+                assert client.get("/devices/10.9.8.7/compare").status_code == 404
+
+    def test_compare_without_config_payloads(self):
+        """Test records lacking configs degrade gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    _record(timestamp="2026-11-20T10:00:00+00:00"),
+                    _record(timestamp="2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            with _client(app) as client:
+                text = client.get("/devices/192.168.1.10/compare").text
+
+        assert "nothing to compare" in text
+
+    def test_device_page_links_to_diff(self):
+        """Test older history rows link to the diff against the newer one."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-20T10:00:00+00:00", mqtt_enable=False),
+                    self._record("2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            newest, older = (r["doc_id"] for r in store.all())
+            with _client(app) as client:
+                text = client.get("/devices/192.168.10.20").text
+
+        assert f"compare?a={older}&amp;b={newest}" in text
+        assert ">Diff<" in text
+
+    def test_viewer_can_compare(self):
+        """Test read-only accounts may compare configurations."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[
+                    self._record("2026-11-20T10:00:00+00:00", mqtt_enable=False),
+                    self._record("2026-11-21T10:00:00+00:00"),
+                ],
+            )
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            client = TestClient(app)
+            _login(client, "guest@example.com", "viewer-password-1")
+
+            assert client.get("/devices/192.168.10.20/compare").status_code == 200

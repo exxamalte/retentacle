@@ -164,6 +164,7 @@ server — your device backups remain untouched.
 
 * `/` - devices overview with scheduler status, backup counts, last backup times, and per-device indicators for automatic backups and recent backups.
 * `/devices/<ip-address>` - all backups for one device, newest first, with per-backup configuration chips, an "unchanged" marker for identical configs, plus links to the device web UI and to restoring the latest backup.
+* `/devices/<ip-address>/compare?a=<id>&b=<id>` - leaf-level diff of the restorable configurations of two backups (changed / added / removed, credentials masked, live state excluded); defaults to the newest pair.
 * `/backups/<id>` - metadata, a manual restore section, a configuration summary, the device state at backup time, and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
 * `/backups/<id>/restore.json` - download only the restorable configuration, ready for `Shelly.SetConfig` (Gen 2/3) or `POST /settings` (Gen 1).
@@ -196,10 +197,13 @@ Typical flow after losing a device: open the device history and find the
 last backup before the unwanted change — the list shows each backup's Wi-Fi
 SSID, MQTT state, component counts and firmware as chips, and collapses rows
 whose configuration matches the newer one to "unchanged" — then hit
-**Restore latest** or open the chosen backup, download the restore JSON,
-adjust the IP in the shown command and run it, and take a fresh backup in
-Retentacle to verify. Model, MAC and firmware are shown for reference only;
-they never appear in a restore payload.
+**Restore latest** or open the chosen backup. The **Diff** link on each
+history row compares that backup's configuration with the next newer one —
+changed, added and removed settings are listed separately (credentials stay
+masked, live state is never compared), so the right restore point is easy to
+pick. Then download the restore JSON, adjust the IP in the shown command and
+run it, and take a fresh backup in Retentacle to verify. Model, MAC and
+firmware are shown for reference only; they never appear in a restore payload.
 
 A **Run backup now** button is available on every page. It backs up the devices
 configured on the Settings page. If no devices are configured there, it backs up
