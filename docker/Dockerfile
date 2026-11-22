@@ -8,9 +8,11 @@
 #   docker build -t retentacle -f docker/Dockerfile .
 #   docker run -d -p 8080:8080 -v retentacle-data:/data retentacle
 #
-# Startup options come from the environment (see the ENV defaults below) and
-# additional command line flags can be appended, e.g.:
-#   docker run -d -e RETENTACLE_PORT=9000 -p 9000:9000 ... retentacle --discover
+# The container starts as root, fixes ownership of the data folder (fresh
+# host bind mounts are root-owned) and then drops to the unprivileged
+# PUID/PGID user before launching the server. Override PUID/PGID to match
+# an existing host folder. Extra command line flags are appended last:
+#   docker run -d -e RETENTACLE_PORT=9000 -e PUID=568 -e PGID=568 ... retentacle --discover
 FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -26,23 +28,27 @@ COPY retentacle ./retentacle
 
 RUN useradd --create-home --uid 10001 retentacle && pip install .
 
-# Bind address, port and data folder of the server; override with -e.
+# Bind address, port and data folder of the server; PUID/PGID select the
+# unprivileged user the server actually runs as. Override all with -e.
 ENV RETENTACLE_HOST=0.0.0.0 \
     RETENTACLE_PORT=8080 \
-    RETENTACLE_DATA_DIR=/data
+    RETENTACLE_DATA_DIR=/data \
+    PUID=10001 \
+    PGID=10001 \
+    HOME=/home/retentacle
 
-# Pre-create the data folder from the default in RETENTACLE_DATA_DIR, so an
-# empty named volume mounted there inherits ownership for the service user.
-# Note: the VOLUME instruction below cannot use environment variables — it
-# always refers to the default path; a custom RETENTACLE_DATA_DIR must be
-# mounted or otherwise writable by UID 10001 at runtime.
+# Pre-create the data folder owned by the default user, so an empty named
+# volume inherits writable ownership without the startup chown. The VOLUME
+# instruction cannot use environment variables and always refers to /data;
+# a custom RETENTACLE_DATA_DIR must be mounted or otherwise writable.
 RUN mkdir -p "$RETENTACLE_DATA_DIR" \
-    && chown -R retentacle:retentacle "$RETENTACLE_DATA_DIR" /app
+    && chown -R 10001:10001 "$RETENTACLE_DATA_DIR" /app
 
 COPY docker/docker-entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 
-USER retentacle
+# Intentionally no USER instruction: the entrypoint runs the server as
+# PUID/PGID after preparing the data folder (see docker-entrypoint.sh).
 
 VOLUME /data
 EXPOSE 8080
