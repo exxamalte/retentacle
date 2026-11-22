@@ -821,3 +821,68 @@ class TestWallClockRechecks:
                 assert scheduler.run_count == 1
             finally:
                 await scheduler.stop()
+
+
+class TestScheduleRecoveryAfterRestart:
+    """Tests for keeping the grid when the pending slot is unavailable."""
+
+    @pytest.mark.asyncio
+    async def test_restart_uses_the_grid_of_the_last_automatic_run(self):
+        """Test a lost pending slot is recovered instead of re-anchored."""
+        backup = RecordingBackup()
+        # The last automatic run started an hour ago, so the next one is due
+        # in 23 hours — not 24 hours after this restart.
+        anchor = datetime.now(UTC) - timedelta(hours=1)
+        scheduler = BackupScheduler(backup, 86400, last_automatic_run_at=anchor)
+
+        await scheduler.start()
+        try:
+            await asyncio.sleep(0.1)
+            expected = anchor + timedelta(seconds=86400)
+
+            assert scheduler.run_count == 0
+            assert abs((scheduler.next_run - expected).total_seconds()) < 5
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_restart_after_missed_slots_catches_up_once(self):
+        """Test downtime over several slots runs once and keeps the time."""
+        backup = RecordingBackup()
+        anchor = datetime.now(UTC) - timedelta(days=3, hours=5)
+        scheduler = BackupScheduler(backup, 86400, last_automatic_run_at=anchor)
+
+        await scheduler.start()
+        try:
+            assert await asyncio.to_thread(backup.done.wait, 2)
+            for _ in range(100):
+                if (
+                    scheduler.next_run
+                    and scheduler.next_run > datetime.now(UTC)
+                    and scheduler.run_count == 1
+                ):
+                    break
+                await asyncio.sleep(0.05)
+
+            offset = (scheduler.next_run - anchor).total_seconds()
+
+            assert scheduler.run_count == 1
+            assert scheduler.next_run > datetime.now(UTC)
+            # Still on the original grid: the daily wall-clock time survived.
+            assert offset % 86400 == 0
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_restart_without_any_history_runs_immediately(self):
+        """Test a first run still happens at once when nothing is known."""
+        backup = RecordingBackup()
+        scheduler = BackupScheduler(backup, 86400)
+
+        await scheduler.start()
+        try:
+            assert await asyncio.to_thread(backup.done.wait, 2)
+        finally:
+            await scheduler.stop()
+
+        assert scheduler.run_count == 1

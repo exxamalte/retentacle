@@ -27,6 +27,7 @@ class BackupScheduler:
         *,
         enabled: bool | None = None,
         next_run_at: datetime | None = None,
+        last_automatic_run_at: datetime | None = None,
         ip_addresses_provider: Callable[[], list[str] | None] | None = None,
         on_schedule_changed: Callable[[datetime | None], None] | None = None,
         on_run_finished: Callable[[datetime, timedelta], None] | None = None,
@@ -45,7 +46,10 @@ class BackupScheduler:
         self._next_run_at = next_run_at if self.enabled else None
         # Grid origin that keeps runs at the chosen wall-clock time even when
         # one runs late or after downtime; None until the first run fixes it.
-        self._anchor_at: datetime | None = self._next_run_at
+        # The pending slot describes it when known; otherwise the last
+        # completed automatic run does, so a restart with an unreadable or
+        # missing pending slot does not move the schedule to the start time.
+        self._anchor_at: datetime | None = self._next_run_at or last_automatic_run_at
         self._pending_runs = 0
         self.last_run: datetime | None = None
         self.last_error: str | None = None
@@ -152,9 +156,11 @@ class BackupScheduler:
             return
         now = datetime.now(UTC)
         if self._next_run_at is None:
-            # No explicitly configured next run: run once immediately and
-            # schedule later runs from the completion time.
-            self._next_run_at = now
+            # The pending slot is unknown: a first run, or the schedule could
+            # not be saved (e.g. an unwritable data folder). Recover it from
+            # the schedule grid instead of letting this restart silently move
+            # the whole schedule to the current time.
+            self._next_run_at = self._startup_slot(now)
         elif self._next_run_at <= now:
             # The scheduled time passed while the server was not running
             # (crash, shutdown, sleep). Never show a next run in the past:
@@ -164,7 +170,28 @@ class BackupScheduler:
                 self._next_run_at.isoformat(),
             )
             self._next_run_at = now
+        _LOGGER.info(
+            "Automatic backups active every %.0f s, next run at %s",
+            self._interval,
+            self._next_run_at.isoformat(timespec="seconds"),
+        )
         self._task = asyncio.create_task(self._run_loop(), name="retentacle-scheduler")
+
+    def _startup_slot(self, now: datetime) -> datetime:
+        """Return the first run time to use when no pending slot is known."""
+        if self._anchor_at is None:
+            # Nothing is known about the schedule yet: run now and let the
+            # completion time become the grid origin.
+            return now
+        interval = self._interval if self._interval > 0 else 3600
+        due = self._anchor_at + timedelta(seconds=interval)
+        if due <= now:
+            _LOGGER.info(
+                "Backup was due at %s; catching up immediately",
+                due.isoformat(),
+            )
+            return now
+        return due
 
     async def stop(self) -> None:
         """Stop the background scheduler."""

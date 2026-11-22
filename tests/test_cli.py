@@ -110,9 +110,10 @@ class TestCLI:
         """Test main function handles OSError."""
         mock_configuration.side_effect = OSError("Permission denied")
 
-        # Should not raise exception
-        cli.main(["--once"])
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main(["--once"])
 
+        assert excinfo.value.code == 1
         mock_backup.assert_not_called()
         mock_run_server.assert_not_called()
 
@@ -125,9 +126,11 @@ class TestCLI:
         """Test main function handles invalid configuration values."""
         mock_configuration.side_effect = ValueError("Invalid configuration")
 
-        # Should not raise exception
-        cli.main(["--once"])
+        # Fatal configuration problems leave a non-zero exit status.
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main(["--once"])
 
+        assert excinfo.value.code == 1
         mock_backup.assert_not_called()
         mock_run_server.assert_not_called()
 
@@ -140,10 +143,25 @@ class TestCLI:
         """Test main function handles a server startup error."""
         mock_run_server.side_effect = OSError("Address already in use")
 
-        # Should not raise exception
-        cli.main([])
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main([])
 
+        assert excinfo.value.code == 1
         mock_backup.assert_not_called()
+
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Configuration")
+    def test_main_exits_when_the_data_folder_is_unusable(
+        self, mock_configuration, mock_run_server
+    ):
+        """Test an unwritable data folder stops the container with an error."""
+        mock_run_server.side_effect = OSError(13, "Data folder /data cannot be used")
+
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main([])
+
+        assert excinfo.value.code == 1
+        mock_run_server.assert_called_once()
 
     def test_web_configured_options_are_rejected(self):
         """Test that flags managed via the web UI were removed."""

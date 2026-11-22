@@ -4,7 +4,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: retentacle:latest
+    # Local build tag: deliberately not "latest", so a stale image or a
+    # registry tag can never be mistaken for this build.
+    image: retentacle:dev
     container_name: retentacle
     ports:
       - "8080:8080"

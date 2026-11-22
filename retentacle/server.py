@@ -3,13 +3,15 @@
 import asyncio
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 import ipaddress
 import json
 import logging
+import os
 from pathlib import Path
 import re
+import stat
 from urllib.parse import parse_qs, quote, urlparse, urlsplit
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
@@ -33,7 +35,7 @@ from .auth import (
 )
 from .backup import Backup
 from .configuration import Configuration, parse_interval
-from .consts import APPLICATION_NAME
+from .consts import APPLICATION_NAME, CONTAINER_IMAGE, DATA_FILENAMES
 from .discovery import (
     DiscoveredDevice,
     discover_shelly_device_details,
@@ -60,6 +62,9 @@ from .updates import refresh_update_info
 from .users import UserRole, UserStore
 
 _LOGGER = logging.getLogger(__name__)
+
+# Probe file used to check that the data folder accepts writes.
+_WRITE_PROBE = ".write-test"
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _DISCOVERY_TIMEOUT = 5.0
@@ -157,30 +162,57 @@ def _interval_form_values(interval: float) -> tuple[str, str]:
     return "custom", value
 
 
-def _saved_next_run(store: BackupStore) -> datetime | None:
-    """Return the next backup time saved via the web UI, if any."""
-    value = store.get_settings().get("next_run_at")
+def _parse_saved_timestamp(value: object) -> datetime | None:
+    """Read a stored ISO timestamp as an aware UTC datetime."""
     if not isinstance(value, str) or not value:
         return None
     try:
         timestamp = datetime.fromisoformat(value)
     except ValueError:
-        _LOGGER.warning("Ignoring invalid saved next backup time: %r", value)
+        _LOGGER.warning("Ignoring invalid saved timestamp: %r", value)
         return None
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
     return timestamp.astimezone(UTC)
 
 
+def _saved_next_run(store: BackupStore) -> datetime | None:
+    """Return the next backup time saved via the web UI, if any."""
+    return _parse_saved_timestamp(store.get_settings().get("next_run_at"))
+
+
 def _effective_schedule(
     configuration: Configuration, store: BackupStore
-) -> tuple[bool, int, datetime | None]:
-    """Return the effective automatic backup setting, interval, and next run."""
+) -> tuple[bool, int, datetime | None, datetime | None]:
+    """Return the automatic backup setting, interval, pending slot and last run."""
     interval = _effective_interval(configuration, store)
     saved_enabled = store.get_settings().get("automatic_backups")
     enabled = saved_enabled if isinstance(saved_enabled, bool) else interval > 0
     enabled = enabled and interval > 0
-    return enabled, interval, _saved_next_run(store) if enabled else None
+    if not enabled:
+        return enabled, interval, None, None
+    settings = store.get_settings()
+    return (
+        enabled,
+        interval,
+        _saved_next_run(store),
+        _saved_last_automatic_start(settings),
+    )
+
+
+def _saved_last_automatic_start(settings: dict) -> datetime | None:
+    """Return when the last automatic backup started, if both values are saved.
+
+    The completion time drifts by the length of each run, so the duration is
+    subtracted to recover the slot the schedule is actually anchored to.
+    """
+    started = _parse_saved_timestamp(settings.get("last_automatic_run_at"))
+    if started is None:
+        return None
+    duration = settings.get("last_automatic_duration")
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+        return started
+    return started - timedelta(seconds=max(0.0, float(duration)))
 
 
 def _save_next_run(store: BackupStore, next_run: datetime | None) -> None:
@@ -1339,12 +1371,15 @@ def create_app(
     )
     users = users or UserStore(configuration.users_path())
     if scheduler is None:
-        enabled, interval, next_run_at = _effective_schedule(configuration, store)
+        enabled, interval, next_run_at, last_run_at = _effective_schedule(
+            configuration, store
+        )
         scheduler = BackupScheduler(
             Backup(configuration, store=store),
             interval,
             enabled=enabled,
             next_run_at=next_run_at,
+            last_automatic_run_at=last_run_at,
             ip_addresses_provider=lambda: _effective_ip_addresses(configuration, store),
             on_schedule_changed=lambda next_run: _save_next_run(store, next_run),
             on_run_finished=lambda completed, duration: _save_last_automatic_run(
@@ -1373,9 +1408,255 @@ def create_app(
 
 def run_server(configuration: Configuration) -> None:
     """Run the Retentacle web server."""
+    data_dir = _require_writable_target_folder(configuration)
+    state = _FolderState.collect(data_dir)
+    _LOGGER.info(
+        "Data folder %s is owned by %s and writable by the server (%s)",
+        data_dir,
+        state.folder_owner or "an unknown owner",
+        state.process_owner,
+    )
     uvicorn.run(
         create_app(configuration),
         host=configuration.host(),
         port=configuration.port(),
         log_level="info",
     )
+
+
+def _require_writable_target_folder(configuration: Configuration) -> Path:
+    """Fail fast with actionable hints when the data folder cannot be used."""
+    data_dir: Path | None = None
+    try:
+        data_dir = configuration.target_folder()
+        _ensure_data_files_writable(data_dir)
+    except OSError as exc:
+        raise OSError(_data_folder_error(data_dir, exc)) from exc
+    return data_dir
+
+
+def _ensure_data_files_writable(data_dir: Path) -> None:
+    """Check that the folder takes new files and stored databases stay writable."""
+    probe = data_dir / _WRITE_PROBE
+    probe.touch()
+    probe.unlink()
+    for name in DATA_FILENAMES:
+        path = data_dir / name
+        # Opening for append neither creates nor truncates a file, but it
+        # demands write access to it: a folder can be writable while a
+        # database left over from another user is not.
+        if path.exists():
+            with path.open("a"):
+                pass
+
+
+@dataclass(frozen=True)
+class _FolderState:
+    """The facts that explain why a data folder cannot be written."""
+
+    path: Path
+    folder_owner: str | None
+    folder_mode: str | None
+    file_owners: dict[str, str]
+    process_owner: str
+    mount: tuple[str, str] | None
+    read_only: bool
+    selinux: str | None
+
+    @classmethod
+    def collect(cls, path: Path) -> _FolderState:
+        """Read the available facts about a folder without raising errors."""
+        folder_owner, folder_mode = _ownership(path)
+        file_owners = {}
+        for name in DATA_FILENAMES:
+            owner, _mode = _ownership(path / name)
+            if owner is not None:
+                file_owners[name] = owner
+        mount = _mount_details(path)
+        return cls(
+            path=path,
+            folder_owner=folder_owner,
+            folder_mode=folder_mode,
+            file_owners=file_owners,
+            process_owner=(
+                f"{os.getuid()}:{os.getgid()}" if hasattr(os, "getuid") else "unknown"
+            ),
+            mount=mount,
+            read_only=_is_read_only(mount),
+            selinux=_selinux_mode(),
+        )
+
+    @property
+    def foreign_files(self) -> list[str]:
+        """Stored databases owned by someone other than the running user."""
+        return [
+            name
+            for name, owner in self.file_owners.items()
+            if owner != self.process_owner
+        ]
+
+    def evidence(self) -> list[str]:
+        """Describe the collected facts for the log message."""
+        details = []
+        if self.folder_owner:
+            details.append(
+                f"{self.path} is owned by {self.folder_owner} mode {self.folder_mode}"
+            )
+        for name, owner in self.file_owners.items():
+            details.append(f"{name} is owned by {owner}")
+        details.append(f"the server runs as {self.process_owner}")
+        if self.mount:
+            fstype, options = self.mount
+            details.append(f"{self.path} is a {fstype} mount ({options})")
+        if self.selinux:
+            details.append(f"SELinux is {self.selinux}")
+        return details
+
+    def remedies(self, failing: Path | None = None) -> list[str]:
+        """Suggest the fixes that match the collected facts.
+
+        ``failing`` is the path the write attempt actually stumbled over, which
+        tells a read-only database file apart from an unusable folder.
+        """
+        remedies = []
+        if self.read_only:
+            remedies.append(
+                "mount the folder read-write — a ':ro' bind mount or a "
+                "read-only export cannot store databases"
+            )
+        if self.selinux == "enforcing":
+            remedies.append(
+                "add ':z' to the bind mount or relabel the host folder with"
+                f" 'chcon -Rt container_file_t {self.path}' — SELinux denies"
+                " writes even when the ownership looks right"
+            )
+        offender = failing or self.path
+        owner, mode = _ownership(offender)
+        if offender != self.path and owner is not None:
+            if owner != self.process_owner:
+                remedies.append(
+                    f"delete {offender.name} or chown it to PUID/PGID (it"
+                    f" belongs to {owner} mode {mode})"
+                )
+            else:
+                remedies.append(
+                    f"make {offender} writable for its owner (chmod u+w, it is"
+                    f" mode {mode})"
+                )
+            return remedies
+        if self.foreign_files:
+            remedies.append(
+                "delete or chown the stored database(s) ("
+                f"{', '.join(self.foreign_files)}) to PUID/PGID"
+            )
+        if self.folder_owner is None:
+            return remedies
+        if self.folder_owner != self.process_owner:
+            uid, _, gid = self.folder_owner.partition(":")
+            if uid == "0":
+                remedies.append(
+                    "start the container as root (remove any user: setting) so"
+                    " the entrypoint can take ownership of the folder, or chown"
+                    f" the host folder to PUID/PGID ({self.process_owner})"
+                )
+            else:
+                remedies.append(
+                    f"set PUID={uid} and PGID={gid}, or start the container as"
+                    " root (remove any user: setting) so the entrypoint can"
+                    " take ownership of the folder"
+                )
+        else:
+            remedies.append(
+                "widen the folder permissions for its owner (for example"
+                f" 'chmod u+rwx {self.path}')"
+            )
+        return remedies
+
+
+def _ownership(path: Path) -> tuple[str | None, str | None]:
+    """Return a path's uid:gid and mode, or None values when unreadable."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None, None
+    return (
+        f"{info.st_uid}:{info.st_gid}",
+        f"{stat.S_IMODE(info.st_mode):04o}",
+    )
+
+
+def _mount_details(path: Path) -> tuple[str, str] | None:
+    """Return the filesystem type and mount options covering a path."""
+    try:
+        lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    return _describe_mount(lines, str(path))
+
+
+def _describe_mount(lines: list[str], target: str) -> tuple[str, str] | None:
+    """Pick the most specific mountinfo entry covering a path."""
+    best: tuple[int, tuple[str, str]] | None = None
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        mount_point, options = parts[4], parts[5]
+        if target != mount_point and not target.startswith(
+            mount_point.rstrip("/") + "/"
+        ):
+            continue
+        separator = parts.index("-") if "-" in parts else len(parts) - 2
+        fstype = parts[separator + 1] if separator + 1 < len(parts) else "unknown"
+        if best is None or len(mount_point) > best[0]:
+            best = (len(mount_point), (fstype, options))
+    return best[1] if best else None
+
+
+def _is_read_only(mount: tuple[str, str] | None) -> bool:
+    """Whether the mount options of a path include a read-only flag."""
+    return bool(mount) and "ro" in mount[1].split(",")
+
+
+def _selinux_mode() -> str | None:
+    """Return the SELinux mode when the container can see the policy."""
+    try:
+        if not Path("/sys/fs/selinux").exists():
+            return None
+        mode = Path("/sys/fs/selinux/enforce").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return "enforcing" if mode == "1" else "permissive"
+
+
+def _data_folder_error(data_dir: Path | None, error: OSError) -> str:
+    """Build the startup failure message with evidence and matching fixes."""
+    location = str(data_dir) if data_dir else "the configured target folder"
+    parts = [f"Data folder {location} cannot be used ({error})."]
+    if data_dir is not None:
+        state = _FolderState.collect(data_dir)
+        parts.append("Found: " + "; ".join(state.evidence()) + ".")
+        remedies = state.remedies(_unusable_path(error, data_dir))
+        if remedies:
+            parts.append("Remedy: " + "; ".join(remedies) + ".")
+    parts.append(
+        "In a container, an image older than the PUID/PGID entrypoint never"
+        f" adjusts a root-owned mount; the current build is"
+        f" {CONTAINER_IMAGE}:main."
+    )
+    return " ".join(parts)
+
+
+def _unusable_path(error: OSError, data_dir: Path) -> Path | None:
+    """Return the stored file a failed write stumbled over, if it was one.
+
+    The startup probe writes a temporary file in the folder itself, so a
+    failure there means the folder is the problem, not a single database.
+    """
+    name = getattr(error, "filename", None)
+    if not isinstance(name, str):
+        return None
+    path = Path(name)
+    if path.parent != data_dir or path.name == _WRITE_PROBE:
+        return None
+    return path

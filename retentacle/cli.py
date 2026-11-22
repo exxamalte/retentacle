@@ -84,8 +84,12 @@ def main(argv: list[str] | None = None) -> None:
             run_server(configuration)
     except ValueError as exc:
         logger.error("Invalid configuration: %s", exc)
+        raise SystemExit(1) from exc
     except OSError as exc:
+        # Fatal: without a usable data folder or port the server cannot keep
+        # any state, so leave a non-zero exit status for supervisors.
         logger.error("Unable to run %s: %s", APPLICATION_NAME, exc)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
