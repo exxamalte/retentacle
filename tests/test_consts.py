@@ -26,3 +26,8 @@ def test_server_defaults():
     assert consts.DEFAULT_PORT == 8080
     assert consts.DATABASE_FILENAME == "retentacle_backups.json"
     assert consts.SETTINGS_FILENAME == "retentacle_settings.json"
+
+
+def test_project_url():
+    """Test project repository URL constant."""
+    assert consts.PROJECT_URL == "https://github.com/exxamalte/retentacle"

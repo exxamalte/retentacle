@@ -2975,6 +2975,8 @@ class TestUserMenu:
         assert 'class="avatar-menu-item" href="/settings"' in text
         assert "Sign out" in text
         assert 'class="version-pill"' in text
+        assert 'aria-label="Project on GitHub"' in text
+        assert 'href="https://github.com/exxamalte/retentacle"' in text
         version = templates.env.globals["application_version"]
         assert f"Retentacle</strong> v{version}" in " ".join(text.split())
 
