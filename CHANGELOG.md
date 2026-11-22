@@ -5,10 +5,13 @@
 * Offer a ready-to-run manual restore command and a dedicated `restore.json` download per backup.
 * Summarize each backup on the device history page with configuration chips, mark unchanged configs, and add a "Restore latest" shortcut.
 * Add a configuration diff view comparing any two backups of a device, with changed, added and removed settings.
+* Add a context-aware button on the device detail page for admins to add or remove that device from automatic backups.
+* Rework the device page header: status badges join the title line, "Back up this device" and "Restore latest" sit together, and the device web UI opens via an icon link next to the device name.
 * Show the history Diff button only where a newer backup exists to compare against.
 * Rename the application to Retentacle.
 * Show the tagline "Tentacles for your Shelly backups." under the name in the header.
 * Show the total size of all backups on disk and the duration of the last automatic backup as dashboard cards on the overview.
+* Show flash messages as auto-dismissing toast overlays instead of banners that shift the page content.
 * Move the "Run backup now" button from the top bar to the dashboard header and add an "Add devices" shortcut to the settings device section.
 * Arrange the overview stat cards in a fixed three-column grid on wide screens.
 * Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.

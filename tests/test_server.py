@@ -313,7 +313,9 @@ class TestServer:
         assert 'href="http://192.168.1.10"' in response.text
         assert 'target="_blank"' in response.text
         assert 'rel="noopener noreferrer"' in response.text
-        assert "Open web UI" in response.text
+        assert 'aria-label="Open the web UI for Kitchen in a new tab"' in (
+            response.text
+        )
 
     def test_index_links_to_ipv6_device_web_ui(self):
         """Test IPv6 device web UI links use brackets."""
@@ -527,7 +529,7 @@ class TestServer:
 
         assert response.status_code == 200
         assert 'href="http://192.168.1.10"' in response.text
-        assert "Open web UI" in response.text
+        assert 'aria-label="Open the device web UI in a new tab"' in response.text
         assert 'target="_blank"' in response.text
         assert 'rel="noopener noreferrer"' in response.text
 
@@ -3665,3 +3667,187 @@ class TestProxyCookieSecurity:
 
                 assert response.status_code == 303
                 assert "secure" in response.headers["set-cookie"].lower()
+
+
+class TestDeviceAutomaticToggle:
+    """Tests for the per-device automatic-backup membership buttons."""
+
+    def test_page_shows_current_membership(self):
+        """Test the badge and the mutually exclusive toggle button."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                text = client.get("/devices/192.168.1.10").text
+                assert "Manual" in text
+                assert 'id="automatic-enable"' in text
+                assert 'id="automatic-disable"' not in text
+
+                store.save_settings(
+                    {**store.get_settings(), "ip_addresses": ["192.168.1.10"]}
+                )
+                text = client.get("/devices/192.168.1.10").text
+
+                assert "Automatic" in text
+                assert 'id="automatic-disable"' in text
+                assert 'id="automatic-enable"' not in text
+
+    def test_enable_adds_device_to_settings_list(self):
+        """Test enabling a device persists it into the automatic list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                response = client.post(
+                    "/devices/192.168.1.10/automatic/enable", follow_redirects=False
+                )
+
+                assert response.status_code == 303
+                assert (
+                    response.headers["location"] == "/devices/192.168.1.10?automatic=on"
+                )
+                assert store.get_settings()["ip_addresses"] == ["192.168.1.10"]
+
+    def test_enable_materializes_configured_devices(self):
+        """Test enabling keeps devices from the configuration file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration("192.168.9.9", tmpdir, None, interval=0)
+            store = BackupStore(config.database_path())
+            store.add(_record())
+            users = UserStore(config.users_path(), pbkdf2_iterations=1)
+            users.create_user(_ADMIN_EMAIL, _ADMIN_PASSWORD, UserRole.ADMIN)
+            app = create_app(config, store=store, users=users)
+            with _client(app) as client:
+                response = client.post(
+                    "/devices/192.168.1.10/automatic/enable", follow_redirects=False
+                )
+
+            assert response.status_code == 303
+            assert store.get_settings()["ip_addresses"] == [
+                "192.168.9.9",
+                "192.168.1.10",
+            ]
+
+    def test_disable_removes_only_that_device(self):
+        """Test removing one device leaves the others automatic."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(
+                tmpdir,
+                records=[_record(), _record(ip_address="192.168.1.11")],
+            )
+            store.save_settings(
+                {
+                    **store.get_settings(),
+                    "ip_addresses": ["192.168.1.10", "192.168.1.11"],
+                }
+            )
+            with _client(app) as client:
+                response = client.post(
+                    "/devices/192.168.1.10/automatic/disable",
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert (
+                    response.headers["location"]
+                    == "/devices/192.168.1.10?automatic=off"
+                )
+                assert store.get_settings()["ip_addresses"] == ["192.168.1.11"]
+
+    def test_notices_render_after_redirect(self):
+        """Test the flash notices after toggling."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                on = client.get("/devices/192.168.1.10?automatic=on").text
+                off = client.get("/devices/192.168.1.10?automatic=off").text
+
+        assert "now included in automatic backups" in on
+        assert "no longer receives automatic backups" in off
+
+    def test_toggle_requires_admin(self):
+        """Test read-only accounts cannot change membership."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            client = TestClient(app)
+            _login(client, "guest@example.com", "viewer-password-1")
+
+            assert client.get("/devices/192.168.1.10").status_code == 200
+            assert (
+                'id="automatic-enable"' not in client.get("/devices/192.168.1.10").text
+            )
+            assert (
+                client.post("/devices/192.168.1.10/automatic/enable").status_code == 403
+            )
+            assert (
+                client.post("/devices/192.168.1.10/automatic/disable").status_code
+                == 403
+            )
+
+    def test_toggle_unknown_device_not_found(self):
+        """Test toggling a device without backups fails cleanly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/devices/192.168.1.99/automatic/enable", follow_redirects=False
+                )
+
+                assert response.status_code == 404
+
+
+class TestToastNotifications:
+    """Tests for flash messages rendered as overlay toasts."""
+
+    def test_flash_messages_render_as_toasts(self):
+        """Test flashes appear as toast scripts without layout blocks."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                text = client.get("/?backup_started=1").text
+
+                assert 'id="toasts"' in text
+                assert "function showToast" in text
+                assert 'showToast("Backup started' in text
+                assert '<div class="notice"' not in text
+
+    def test_device_flash_escapes_names(self):
+        """Test device names with quotes render safely in toast scripts."""
+        record = _record()
+        record["device_info"] = {"gen": 2, "name": 'Kitchen "Special"'}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[record])
+            with _client(app) as client:
+                text = client.get("/devices/192.168.1.10?automatic=on").text
+
+        assert 'showToast("Kitchen \\"Special\\" is now included' in text
+
+    def test_settings_error_renders_as_error_toast(self):
+        """Test validation failures use the toast error variant."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/retention", data={"retention_monthly": "abc"}
+                )
+
+        assert response.status_code == 400
+        assert 'showToast("Could not save settings' in response.text
+        assert (
+            '<div class="alert"'
+            not in response.text.split('aria-label="Backup schedule"')[0]
+        )
+
+    def test_login_error_stays_inline(self):
+        """Test the login card keeps its inline error alert."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/login",
+                    data={"email": _ADMIN_EMAIL, "password": "totally-wrong-pass"},
+                )
+
+        assert response.status_code == 401
+        assert '<div class="alert"' in response.text

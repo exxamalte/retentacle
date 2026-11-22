@@ -11,16 +11,11 @@
   </div>
 
   {% if saved %}
-    <div class="notice" role="status">
-      Settings saved. The updated schedule takes effect immediately; retention
-      is applied after the next successful backup.
-    </div>
+    <script>showToast("Settings saved. The updated schedule takes effect immediately; retention is applied after the next successful backup.", "success");</script>
   {% endif %}
 
   {% if error %}
-    <div class="alert" role="alert">
-      <strong>Could not save settings:</strong> {{ error }}
-    </div>
+    <script>showToast({{ ("Could not save settings: " ~ error)|tojson }}, "error");</script>
   {% endif %}
 
   <section class="card settings-panel" aria-label="Backup schedule">
@@ -306,9 +301,7 @@
     <p class="field-help" data-discovery-empty hidden></p>
 
     {% if discovery_error %}
-      <div class="alert" role="alert">
-        <strong>Discovery failed:</strong> {{ discovery_error }}
-      </div>
+      <script>showToast({{ ("Discovery failed: " ~ discovery_error)|tojson }}, "error");</script>
     {% elif discovery_ran %}
       {% if discovered_devices %}
         <form method="post" action="/settings/devices" class="device-form">

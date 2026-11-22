@@ -8,43 +8,68 @@
   </p>
 
   {% if request.query_params.get('backup_done') %}
-    <div class="notice" role="status">
-      Backup completed for {{ display_name }}.
-    </div>
+    <script>showToast({{ "Backup completed for %s."|format(display_name)|tojson }}, "success");</script>
   {% elif request.query_params.get('backup_failed') %}
-    <div class="alert" role="alert">
-      <strong>Backup failed</strong> for {{ display_name }}. Check the server log for details.
-    </div>
+    <script>showToast({{ "Backup failed for %s. Check the server log for details."|format(display_name)|tojson }}, "error");</script>
+  {% elif request.query_params.get('automatic') == 'on' %}
+    <script>showToast({{ "%s is now included in automatic backups."|format(display_name)|tojson }}, "success");</script>
+  {% elif request.query_params.get('automatic') == 'off' %}
+    <script>showToast({{ "%s no longer receives automatic backups. Manual backups stay available."|format(display_name)|tojson }}, "info");</script>
   {% endif %}
 
-  <div class="page-header">
-    <div>
-      <h1>{{ display_name }}</h1>
+  <div class="page-header device-header">
+    <div class="page-title">
+      <h1>
+        {{ display_name }}
+        {% if web_url %}
+          <a
+            class="button icon-button device-web-link"
+            href="{{ web_url }}"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open the device web UI in a new tab"
+            aria-label="Open the device web UI in a new tab"
+          ><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
+        {% endif %}
+      </h1>
       <p class="subtitle">
         <span class="mono">{{ ip_address }}</span>
-        &middot; {{ backups|length }} backup{% if backups|length != 1 %}s{% endif %}
+        <span>{{ backups|length }} backup{% if backups|length != 1 %}s{% endif %}</span>
+        <span class="badge{% if automatic %} success{% endif %}" title="{% if automatic %}Included in automatic backups{% else %}Not included in automatic backups{% endif %}">{{ 'Automatic' if automatic else 'Manual' }}</span>
+        <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
       </p>
     </div>
     <div class="header-actions">
-      <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
+      {% if request.state.user.role == 'admin' %}
+        <form method="post" action="/devices/{{ ip_address }}/backup">
+          <button class="button primary" type="submit" title="Back up {{ display_name }} now">Back up this device</button>
+        </form>
+      {% endif %}
       <a
         class="button"
         href="/backups/{{ backups[0].doc_id }}#manual-restore"
         title="Open the restore section of the newest backup"
       >Restore latest</a>
-      {% if web_url %}
-        <a
-          class="button"
-          href="{{ web_url }}"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Open the device web UI in a new tab"
-        >Open web UI</a>
-      {% endif %}
       {% if request.state.user.role == 'admin' %}
-        <form method="post" action="/devices/{{ ip_address }}/backup">
-          <button class="button primary" type="submit">Back up this device</button>
-        </form>
+        {% if automatic %}
+          <form method="post" action="/devices/{{ ip_address }}/automatic/disable">
+            <button
+              class="button"
+              type="submit"
+              id="automatic-disable"
+              title="Remove this device from automatic backups"
+            >Remove from automatic</button>
+          </form>
+        {% else %}
+          <form method="post" action="/devices/{{ ip_address }}/automatic/enable">
+            <button
+              class="button"
+              type="submit"
+              id="automatic-enable"
+              title="Include this device in automatic backups"
+            >Add to automatic</button>
+          </form>
+        {% endif %}
       {% endif %}
     </div>
   </div>
