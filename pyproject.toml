@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "retentacle"
-version  = "2026.11.0-beta1"
+version  = "2026.11.0-beta2"
 requires-python = ">= 3.14"
 authors = [
   {name = "Malte Franken", email = "coding@subspace.de"},
