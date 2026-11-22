@@ -719,3 +719,49 @@ class TestScheduleGrid:
         await scheduler.run_once(automatic=True)
 
         assert scheduler.next_run == anchor
+
+
+class TestRunFinishedCallback:
+    """Tests for the run-finished notification of automatic runs."""
+
+    @pytest.mark.asyncio
+    async def test_only_automatic_runs_notify(self):
+        """Test that manual runs do not report a finished automatic run."""
+        backup = Mock()
+        backup.execute.return_value = []
+        finished = []
+        scheduler = BackupScheduler(
+            backup,
+            60,
+            on_run_finished=lambda completed, duration: finished.append(
+                (completed, duration)
+            ),
+        )
+
+        await scheduler.run_once()
+
+        assert finished == []
+
+        await scheduler.run_once(automatic=True)
+
+        assert len(finished) == 1
+        completed, duration = finished[0]
+        assert isinstance(completed, datetime)
+        assert isinstance(duration, timedelta)
+        assert duration.total_seconds() >= 0
+
+    @pytest.mark.asyncio
+    async def test_callback_failure_does_not_break_run(self):
+        """Test that a raising callback cannot fail the backup run."""
+        backup = Mock()
+        backup.execute.return_value = []
+
+        def boom(completed, duration):
+            raise RuntimeError("storage offline")
+
+        scheduler = BackupScheduler(backup, 60, on_run_finished=boom)
+
+        await scheduler.run_once(automatic=True)
+
+        assert scheduler.last_run is not None
+        assert scheduler.run_count == 1

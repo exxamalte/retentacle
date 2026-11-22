@@ -12,6 +12,14 @@
         {% endif %}
       </p>
     </div>
+    {% if request.state.user.role == 'admin' %}
+      <div class="header-actions">
+        <a class="button" href="/settings#devices">Add devices</a>
+        <form method="post" action="/backup?redirect=/">
+          <button class="button primary" type="submit">Run backup now</button>
+        </form>
+      </div>
+    {% endif %}
   </div>
 
   {% if request.query_params.get('backup_started') %}
@@ -56,6 +64,14 @@
     <div class="card">
       <p class="stat-label">Last automatic backup</p>
       <p class="stat-value">{{ last_backup|format_timestamp }}</p>
+    </div>
+    <div class="card">
+      <p class="stat-label">Backup size on disk</p>
+      <p class="stat-value">{{ backup_size }}</p>
+    </div>
+    <div class="card">
+      <p class="stat-label">Last backup duration</p>
+      <p class="stat-value">{{ last_duration }}</p>
     </div>
     <div class="card">
       <p class="stat-label">Next run</p>
@@ -147,16 +163,21 @@
       <p>
         {% if request.state.user.role == 'admin' %}
           The first backup will run automatically according to the configured
-          interval. You can also start one right now.
+          interval. Add devices to get started, or back up the currently
+          configured devices right now.
         {% else %}
           The first backup will run automatically according to the configured
-          interval. Ask an administrator to add devices and run the first backup.
+          interval. Ask an administrator to add devices and run the first
+          backup.
         {% endif %}
       </p>
       {% if request.state.user.role == 'admin' %}
-        <form method="post" action="/backup">
-          <button class="button primary" type="submit">Run backup now</button>
-        </form>
+        <div class="row-actions" style="justify-content: center;">
+          <a class="button primary" href="/settings#devices">Add devices</a>
+          <form method="post" action="/backup?redirect=/">
+            <button class="button" type="submit">Run backup now</button>
+          </form>
+        </div>
       {% endif %}
     </section>
   {% endif %}

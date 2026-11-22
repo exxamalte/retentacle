@@ -421,6 +421,21 @@ class TestBackupStore:
                 2026, 11, 15, 10, 0, tzinfo=UTC
             )
 
+    def test_backup_size(self):
+        """Test the reported on-disk size of the backup database."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "retentacle_backups.json"
+            empty = BackupStore(path)
+            assert empty.backup_size() == 0
+
+            store = BackupStore(path)
+            store.add(_record())
+            store.add(_record())
+
+            size = store.backup_size()
+            assert size > 0
+            assert size == path.stat().st_size
+
     def test_settings_without_database(self):
         """Test reading settings from a database that does not exist yet."""
         with tempfile.TemporaryDirectory() as tmpdir:

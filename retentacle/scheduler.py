@@ -24,6 +24,7 @@ class BackupScheduler:
         next_run_at: datetime | None = None,
         ip_addresses_provider: Callable[[], list[str] | None] | None = None,
         on_schedule_changed: Callable[[datetime | None], None] | None = None,
+        on_run_finished: Callable[[datetime, timedelta], None] | None = None,
     ):
         """Initialise the scheduler."""
         self._backup = backup
@@ -31,6 +32,7 @@ class BackupScheduler:
         self._enabled = self._interval > 0 if enabled is None else bool(enabled)
         self._ip_addresses_provider = ip_addresses_provider
         self._on_schedule_changed = on_schedule_changed
+        self._on_run_finished = on_run_finished
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._progress_lock = threading.Lock()
@@ -219,8 +221,11 @@ class BackupScheduler:
                 self.last_error = str(exc) or exc.__class__.__name__
                 _LOGGER.exception("Backup run failed")
             finally:
-                self.last_run = datetime.now(UTC)
+                completed = datetime.now(UTC)
+                self.last_run = completed
                 self.run_count += 1
+                if automatic and self.started_at is not None:
+                    self._notify_run_finished(completed, completed - self.started_at)
                 with self._progress_lock:
                     self.progress_current = None
 
@@ -247,6 +252,15 @@ class BackupScheduler:
             self._on_schedule_changed(next_run_at)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Unable to save the next backup time")
+
+    def _notify_run_finished(self, completed_at: datetime, duration: timedelta) -> None:
+        """Report a finished automatic run when configured to do so."""
+        if self._on_run_finished is None:
+            return
+        try:
+            self._on_run_finished(completed_at, duration)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Unable to save the last automatic backup duration")
 
     def _next_after_run(self, scheduled: datetime | None) -> datetime:
         """Return the next run on the fixed schedule grid.

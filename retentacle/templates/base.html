@@ -572,6 +572,12 @@
       margin-bottom: 1.25rem;
     }
 
+    @media (min-width: 900px) {
+      .stat-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
     .stat-label {
       margin: 0 0 0.3rem;
       color: var(--muted);
@@ -995,11 +1001,6 @@
       {% set user = request.state.user %}
       <div class="header-actions">
         {% if user %}
-          {% if user.role == 'admin' %}
-            <form method="post" action="/backup?redirect={{ request.url.path }}">
-              <button class="button primary" type="submit">Run backup now</button>
-            </form>
-          {% endif %}
           <div class="user-menu" data-user-menu>
             <button
               class="avatar-button"

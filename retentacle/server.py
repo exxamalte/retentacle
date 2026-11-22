@@ -188,6 +188,47 @@ def _save_next_run(store: BackupStore, next_run: datetime | None) -> None:
     store.save_settings(settings)
 
 
+def _save_last_automatic_run(
+    store: BackupStore, completed_at: datetime, duration: timedelta
+) -> None:
+    """Persist when the last automatic backup ran and how long it took."""
+    settings = store.get_settings()
+    settings["last_automatic_run_at"] = completed_at.isoformat()
+    settings["last_automatic_duration"] = round(duration.total_seconds(), 3)
+    store.save_settings(settings)
+
+
+def _saved_last_automatic_duration(store: BackupStore) -> float | None:
+    """Return the persisted duration of the last automatic backup run."""
+    value = store.get_settings().get("last_automatic_duration")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _format_bytes(size: int) -> str:
+    """Format a byte count for display with binary units."""
+    value = float(max(0, size))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(value)} B"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GB"
+
+
+def _format_duration(seconds: float | None) -> str:
+    """Format a duration in seconds for display."""
+    if seconds is None or seconds < 0:
+        return "Unknown"
+    if seconds < 1:
+        return f"{round(seconds * 1000)} ms"
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    return _format_interval(seconds)
+
+
 def _effective_retention(store: BackupStore) -> RetentionPolicy:
     """Return the retention policy, using defaults when none is saved."""
     return retention_policy_from_settings(store.get_settings())
@@ -1163,6 +1204,10 @@ def _register_routes(
                 ),
                 "scheduler": scheduler,
                 "last_backup": store.latest_backup_time(automatic_only=True),
+                "backup_size": _format_bytes(store.backup_size()),
+                "last_duration": _format_duration(
+                    _saved_last_automatic_duration(store)
+                ),
             },
         )
 
@@ -1231,6 +1276,9 @@ def create_app(
             next_run_at=next_run_at,
             ip_addresses_provider=lambda: _effective_ip_addresses(configuration, store),
             on_schedule_changed=lambda next_run: _save_next_run(store, next_run),
+            on_run_finished=lambda completed, duration: _save_last_automatic_run(
+                store, completed, duration
+            ),
         )
 
     @asynccontextmanager

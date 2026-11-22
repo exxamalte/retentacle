@@ -115,6 +115,13 @@ class BackupStore:
         """Get the path to the settings database."""
         return self._settings_path
 
+    def backup_size(self) -> int:
+        """Return the on-disk size of the backup database in bytes."""
+        with _LOCK:
+            if not self._path.exists():
+                return 0
+            return self._path.stat().st_size
+
     def get_settings(self) -> dict[str, Any]:
         """Return persisted application settings."""
         with _LOCK:

@@ -162,7 +162,7 @@ server — your device backups remain untouched.
 
 ### Web UI
 
-* `/` - devices overview with scheduler status, backup counts, last backup times, and per-device indicators for automatic backups and recent backups.
+* `/` - devices overview with scheduler status, backup counts, last automatic backup, total backup size on disk, the duration of the last automatic backup, next run time, and per-device indicators for automatic backups and recent backups.
 * `/devices/<ip-address>` - all backups for one device, newest first, with per-backup configuration chips, an "unchanged" marker for identical configs, plus links to the device web UI and to restoring the latest backup.
 * `/devices/<ip-address>/compare?a=<id>&b=<id>` - leaf-level diff of the restorable configurations of two backups (changed / added / removed, credentials masked, live state excluded); defaults to the newest pair.
 * `/backups/<id>` - metadata, a manual restore section, a configuration summary, the device state at backup time, and raw JSON for a single backup.
@@ -205,15 +205,18 @@ pick. Then download the restore JSON, adjust the IP in the shown command and
 run it, and take a fresh backup in Retentacle to verify. Model, MAC and
 firmware are shown for reference only; they never appear in a restore payload.
 
-A **Run backup now** button is available on every page. It backs up the devices
-configured on the Settings page. If no devices are configured there, it backs up
-all devices currently listed in the overview, falling back to the configured or
-discovered devices when the overview is empty. Each device row in the overview
-offers its actions — view backups, open the device web UI, and back up this
-device — as compact icon buttons with tooltips and screen-reader labels, so the
-table stays readable without horizontal scrolling. The device detail page keeps
-these as labelled buttons, including **Back up this device**, to back up just
-that device without waiting for the next scheduled run.
+The dashboard header offers **Run backup now** (admins only) — it backs up
+the devices configured on the Settings page; if none are configured there, it
+backs up all devices currently listed in the overview, falling back to the
+configured or discovered devices when the overview is empty. Next to it,
+**Add devices** jumps straight to the device section of the Settings page. On
+a fresh install both actions also appear in the "No backups yet" panel.
+Each device row in the overview offers its actions — view backups, open the
+device web UI, and back up this device — as compact icon buttons with
+tooltips and screen-reader labels, so the table stays readable without
+horizontal scrolling. The device detail page keeps these as labelled buttons,
+including **Back up this device**, to back up just that device without
+waiting for the next scheduled run.
 
 Each device in the overview shows whether it is included in automatic backups
 and whether its latest backup is recent. A backup is considered recent when it
