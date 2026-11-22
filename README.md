@@ -26,15 +26,25 @@ settings to a device is not supported.
 
 ## Installation
 
+Retentacle is distributed as a regular Python package. Installing it puts the
+`retentacle` command on your PATH — this is the command used in all examples
+below (equivalently, invoke it as `python -m retentacle`):
+
 ```commandline
 pip install .
 ```
+
+Tip: [`pipx`](https://pipx.pypa.io) installs the command into an isolated,
+own virtual environment if you prefer not to pollute your system Python.
 
 For development, install the test dependencies as well:
 
 ```commandline
 pip install -e ".[tests]"
 ```
+
+There are no standalone executables or binary downloads — running the app
+requires a Python 3.14+ environment (or use the container image).
 
 To run Retentacle as a container service instead, see [Docker](#docker).
 

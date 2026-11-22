@@ -1,6 +1,6 @@
 # Changes
 
-## 2026.5.0
+## 2026.11.0
 * Present backups in restore-oriented zones: restorable configuration, masked settings summary, and clearly separated live state.
 * Offer a ready-to-run manual restore command and a dedicated `restore.json` download per backup.
 * Summarize each backup on the device history page with configuration chips, mark unchanged configs, and add a "Restore latest" shortcut.
