@@ -55,6 +55,7 @@ from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_
 from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name
 from .templating import templates
+from .updates import refresh_update_info
 from .users import UserRole, UserStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -1007,9 +1008,10 @@ def _register_settings_routes(
     """Register the settings page routes."""
 
     @app.get("/settings", response_class=HTMLResponse)
-    async def settings_page(request: Request):
+    async def settings_page(request: Request, background_tasks: BackgroundTasks):
         """Show the application settings form."""
         require_admin(request)
+        background_tasks.add_task(refresh_update_info)
         return _render_settings(
             request,
             configuration,
@@ -1193,8 +1195,9 @@ def _register_routes(
     """Register the web routes on the application."""
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    async def index(request: Request, background_tasks: BackgroundTasks):
         """Show all devices with backups."""
+        background_tasks.add_task(refresh_update_info)
         return templates.TemplateResponse(
             request=request,
             name="index.html",

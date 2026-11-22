@@ -620,6 +620,17 @@
       color: var(--muted);
     }
 
+    .update-badge {
+      background: var(--warning-soft);
+      color: var(--warning);
+      font-weight: 650;
+    }
+
+    .update-badge:hover {
+      color: var(--warning);
+      text-decoration: underline;
+    }
+
     .notice,
     .alert {
       margin: 0 0 1.25rem;
@@ -1001,6 +1012,16 @@
       {% set user = request.state.user %}
       <div class="header-actions">
         {% if user %}
+          {% set update = update_info() %}
+          {% if user.role == 'admin' and update and update.available %}
+            <a
+              class="badge update-badge"
+              href="{{ update.html_url }}"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Retentacle {{ update.latest }} is available — you are running {{ update.current }}"
+            >v{{ update.latest }} available</a>
+          {% endif %}
           <div class="user-menu" data-user-menu>
             <button
               class="avatar-button"

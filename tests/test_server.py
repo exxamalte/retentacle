@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from fastapi.testclient import TestClient
 import pytest
 
+from retentacle import updates
 from retentacle.configuration import Configuration
 from retentacle.discovery import DiscoveredDevice
 from retentacle.oidc import OIDCError
@@ -34,6 +35,7 @@ from retentacle.server import (
 )
 from retentacle.storage import BackupStore
 from retentacle.templating import templates
+from retentacle.updates import UpdateInfo, cached_update
 from retentacle.users import UserRole, UserStore
 
 _ADMIN_EMAIL = "admin@example.com"
@@ -3533,3 +3535,81 @@ class TestDashboardStats:
 
             assert _saved_last_automatic_duration(store) is not None
             assert "last_automatic_run_at" in store.get_settings()
+
+
+class TestUpdateBadge:
+    """Tests for the admin-only update badge in the header."""
+
+    def _seed_release_cache(self, latest):
+        updates.clear_cache()
+        # Seeding the module cache directly keeps the test offline.
+        updates._state["info"] = UpdateInfo(  # noqa: SLF001
+            current=updates.current_version(),
+            latest=latest,
+            html_url=("https://github.com/exxamalte/retentacle/releases/tag/" + latest),
+        )
+
+    def test_admin_sees_update_badge(self):
+        """Test the header shows the version badge for admins."""
+        self._seed_release_cache("v9999.0.0")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                text = client.get("/").text
+
+        assert "v9999.0.0 available" in text
+        assert 'class="badge update-badge"' in text
+        assert (
+            'href="https://github.com/exxamalte/retentacle/releases/tag/v9999.0.0"'
+            in text
+        )
+
+    def test_viewer_does_not_see_update_badge(self):
+        """Test read-only accounts never see the update badge."""
+        self._seed_release_cache("v9999.0.0")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            client = TestClient(app)
+            _login(client, "guest@example.com", "viewer-password-1")
+            text = client.get("/").text
+
+        assert 'class="badge update-badge"' not in text
+        assert "v9999.0.0" not in text
+
+    def test_no_badge_when_up_to_date(self):
+        """Test the badge stays hidden when the release is not newer."""
+        self._seed_release_cache("v0.0.1")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                text = client.get("/").text
+
+        assert "v0.0.1 available" not in text
+        assert 'class="badge update-badge"' not in text
+
+    def test_dashboard_view_triggers_background_refresh(self, monkeypatch):
+        """Test visiting the dashboard refreshes a stale cache."""
+        updates.clear_cache()
+        monkeypatch.setenv("RETENTACLE_UPDATE_CHECK", "1")
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "tag_name": "v9999.0.0",
+            "html_url": "https://github.com/exxamalte/retentacle/releases",
+        }
+        with (
+            patch("httpx.get", return_value=response),
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                client.get("/")
+                refreshed = cached_update()
+                text = client.get("/").text
+
+        assert refreshed is not None
+        assert refreshed.latest == "v9999.0.0"
+        assert 'class="badge update-badge"' in text

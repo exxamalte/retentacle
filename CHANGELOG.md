@@ -19,6 +19,8 @@
 * Keep automatic backups on the fixed wall-clock schedule chosen in the settings, even after restarts, late catch-up runs, or manual backups.
 * Track the trigger of each backup and base the overview's last automatic backup card on scheduled runs only.
 * Add a GitHub link next to the version number in the account menu.
+* Show an admin-only badge in the header when a newer stable release is available on GitHub; pre-releases are never announced.
+* Add a release workflow that creates a GitHub Release from pushed version tags, marking suffixed versions (dev, alpha, beta, rc, b) as pre-releases.
 * Replace the header email badge and sign-out button with an avatar account menu showing the role, settings link, and app version, using the OIDC profile picture from userinfo or the ID token when available.
 * Remove the Settings button from the header; it lives in the account menu now.
 * Serve the app logo from a static folder inside the package and show it in the header and as favicon.
