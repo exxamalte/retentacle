@@ -74,6 +74,11 @@ async def _form(request: Request) -> dict[str, str]:
     return _parse_body(await request.body())
 
 
+def request_is_secure(request: Request) -> bool:
+    """Whether the request arrived over HTTPS (including via proxy headers)."""
+    return request.url.scheme == "https"
+
+
 def start_session(users: UserStore, user: User) -> str:
     """Create a login session and return its token."""
     token = users.create_session(user.user_id)
@@ -85,6 +90,8 @@ def with_session_cookie(
     response: Response,
     token: str,
     max_age: timedelta,
+    *,
+    secure: bool = False,
 ) -> Response:
     """Attach the session cookie to the given response."""
     response.set_cookie(
@@ -92,6 +99,7 @@ def with_session_cookie(
         value=token,
         max_age=int(max_age.total_seconds()),
         httponly=True,
+        secure=bool(secure),
         samesite="lax",
         path="/",
     )
@@ -191,7 +199,9 @@ def _register_setup_routes(app: FastAPI, users: UserStore) -> None:
             )
         token = start_session(users, user)
         response = RedirectResponse(url="/", status_code=303)
-        return with_session_cookie(response, token, users.session_max_age)
+        return with_session_cookie(
+            response, token, users.session_max_age, secure=request_is_secure(request)
+        )
 
 
 def _register_login_routes(app: FastAPI, users: UserStore, store: BackupStore) -> None:
@@ -229,7 +239,9 @@ def _register_login_routes(app: FastAPI, users: UserStore, store: BackupStore) -
             )
         token = start_session(users, user)
         response = RedirectResponse(url="/", status_code=303)
-        return with_session_cookie(response, token, users.session_max_age)
+        return with_session_cookie(
+            response, token, users.session_max_age, secure=request_is_secure(request)
+        )
 
     @app.post("/logout")
     async def logout(request: Request):
@@ -370,7 +382,9 @@ async def _oidc_process_callback(
     users.set_picture(user.user_id, picture)
     token = start_session(users, user)
     response = RedirectResponse(url="/", status_code=303)
-    return with_session_cookie(response, token, users.session_max_age)
+    return with_session_cookie(
+        response, token, users.session_max_age, secure=request_is_secure(request)
+    )
 
 
 def _register_oidc_routes(app: FastAPI, users: UserStore, store: BackupStore) -> None:

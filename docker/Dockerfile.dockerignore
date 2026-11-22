@@ -1,0 +1,37 @@
+# Build ignore rules for docker/Dockerfile.
+# BuildKit picks this file up because it sits next to the Dockerfile with the
+# name "<dockerfile>.dockerignore"; it takes precedence over a root
+# .dockerignore, which BuildKit would then ignore — so keep only this one.
+# Legacy (non-BuildKit) builders only read a root .dockerignore; with them the
+# rules below are skipped, which is safe because the Dockerfile COPYs only
+# explicitly listed files. Patterns are relative to the build context, i.e.
+# the repository root:
+#   docker build -t retentacle -f docker/Dockerfile .
+# Exclude everything the image build does not need. The package itself and
+# its packaging inputs (see Dockerfile) are copied explicitly.
+.git
+.github
+.idea
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+venv/
+build/
+dist/
+*.egg-info/
+temp/
+tests/
+data/
+
+# Local files that must never end up in an image.
+.DS_Store
+configuration.yaml
+retentacle_backups.json
+retentacle_settings.json
+retentacle_users.json
+PLAN.md
+CHANGELOG.md
+docker/docker-compose.yml
+docker/Dockerfile
+docker/Dockerfile.dockerignore

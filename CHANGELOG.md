@@ -25,6 +25,10 @@
 * Remove the Settings button from the header; it lives in the account menu now.
 * Serve the app logo from a static folder inside the package and show it in the header and as favicon.
 * Add a Docker deployment option with a Dockerfile, docker-compose example and data volume.
+* Configure the container's host, port and data folder via RETENTACLE_HOST, RETENTACLE_PORT and RETENTACLE_DATA_DIR environment variables.
+* Derive the image's pre-created data folder from RETENTACLE_DATA_DIR instead of hard-coding it in the Dockerfile.
+* Move all Docker-related files (Dockerfile, entrypoint, compose, ignore rules) into a docker/ folder.
+* Support reverse proxies like Traefik via FORWARDED_ALLOW_IPS and mark session cookies Secure when served over HTTPS.
 * Publish multi-architecture container images to the GitHub Container Registry from CI.
 * Reserve the `latest` container tag for proper releases and tag development builds with the current application version.
 * Stop building standalone executables; install the Python package instead.

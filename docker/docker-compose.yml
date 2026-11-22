@@ -1,0 +1,36 @@
+# Build context is the repository root; see docker/Dockerfile.
+services:
+  retentacle:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: retentacle:latest
+    container_name: retentacle
+    ports:
+      - "8080:8080"
+    volumes:
+      - retentacle-data:/data
+    restart: unless-stopped
+    environment:
+      # Port the server listens on inside the container. When you change it,
+      # adjust the port mapping above (e.g. "9000:9000") accordingly.
+      RETENTACLE_PORT: "8080"
+      # Bind address; 0.0.0.0 is required for container access and is the
+      # default — listed here for completeness.
+      # RETENTACLE_HOST: 0.0.0.0
+      # Where the JSON databases are stored (mount a volume at this path).
+      # RETENTACLE_DATA_DIR: /data
+      # Behind a reverse proxy (Traefik, nginx, Caddy, …): trust the
+      # X-Forwarded-* headers from the proxy so HTTPS, the host name and
+      # secure session cookies work correctly. Use the proxy's IP, its
+      # Docker network range, or "*" for the simplest Docker setups.
+      # FORWARDED_ALLOW_IPS: "*"
+
+    # mDNS device discovery only works when the container shares the host
+    # network. Uncomment the line below (and remove the ports mapping) to
+    # enable it, then add --discover to the command:
+    # network_mode: host
+    # command: ["--discover"]
+
+volumes:
+  retentacle-data:
