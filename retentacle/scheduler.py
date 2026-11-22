@@ -11,6 +11,11 @@ from .backup import Backup
 
 _LOGGER = logging.getLogger(__name__)
 
+# Upper bound for a single timer sleep while waiting for the next run. The
+# asyncio clock pauses while the machine sleeps, so due slots are re-checked
+# against the wall clock periodically instead of trusting one long sleep.
+_WALL_CLOCK_POLL_SECONDS = 60.0
+
 
 class BackupScheduler:
     """Run backups periodically in the background."""
@@ -299,7 +304,10 @@ class BackupScheduler:
             if delay <= 0:
                 return
             try:
-                await asyncio.wait_for(self._reschedule.wait(), timeout=delay)
+                await asyncio.wait_for(
+                    self._reschedule.wait(),
+                    timeout=min(delay, _WALL_CLOCK_POLL_SECONDS),
+                )
             except TimeoutError:
                 continue
             self._reschedule.clear()
