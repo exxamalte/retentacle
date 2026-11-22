@@ -160,6 +160,32 @@ unreachable, you can re-enable it by deleting `retentacle_settings.json` (or
 removing the `oidc` entry from its `settings` document) and restarting the
 server — your device backups remain untouched.
 
+### Update notifications
+
+When a newer version is published, admins see a warning-toned badge in the
+header (e.g. **v2026.6.0 available**) linking to the release page; read-only
+accounts never see it. The badge appears once a check has completed — checks
+run in the background when a signed-in user views the dashboard or the
+Settings page, and results are cached for 6 hours, so the app works fine
+without internet access (it just never shows the badge).
+
+Requirements and options:
+
+* **GitHub releases are required.** The check calls the GitHub Releases API
+  (`/releases/latest`) of `exxamalte/retentacle`, which returns the newest
+  **published, non-prerelease Release** — pushing a `v*` tag alone is not
+  enough; the tag needs a Release created from it.
+* The project repository is public, so no token is needed. It talks to
+  `api.github.com` anonymously (at most ~4 requests/day thanks to the cache,
+  far below the 60/hour limit). For a **private** repository (e.g. your own
+  fork with releases), set `RETENTACLE_UPDATE_TOKEN` to a token with read
+  access to that repo's contents.
+* Environment variables (also usable in Docker/compose):
+  * `RETENTACLE_UPDATE_REPO` — check a different `owner/repo` (default:
+    `exxamalte/retentacle`).
+  * `RETENTACLE_UPDATE_TOKEN` — bearer token for private repositories.
+  * `RETENTACLE_UPDATE_CHECK=0` — disable update checks entirely.
+
 ### Web UI
 
 * `/` - devices overview with scheduler status, backup counts, last automatic backup, total backup size on disk, the duration of the last automatic backup, next run time, and per-device indicators for automatic backups and recent backups.
