@@ -303,13 +303,13 @@ must remain above zero.
 ## Docker
 
 Retentacle publishes a multi-architecture (amd64 and arm64) container image
-to the GitHub Container Registry whenever `main` is updated or a version tag
-is pushed:
+to the GitHub Container Registry. Images live under the full name
+`ghcr.io/exxamalte/retentacle`:
 
 ```commandline
-docker pull ghcr.io/exxamalte/retentacle:latest
+docker pull ghcr.io/exxamalte/retentacle:main
 docker run -d --name retentacle -p 8080:8080 -v retentacle-data:/data \
-  ghcr.io/exxamalte/retentacle:latest
+  ghcr.io/exxamalte/retentacle:main
 ```
 
 Tags work as follows: proper releases (a plain numeric `vX.Y.Z` git tag)
@@ -319,6 +319,12 @@ builds on the default branch publish the current application version from
 identifiers — they never touch `latest`. Pre-release tags (any suffix such
 as `-alpha`, `-beta`, `-rc`, `-dev`, `.dev1` or `b1`) publish only their tag
 name and `sha-<commit>`, never `latest`.
+
+Until the first proper release of a version, `latest` therefore points at the
+previous stable build, not the newest one. Use the moving `main` tag, or pin
+an exact version such as `2026.11.0-beta2`, to get current code; `main` and
+tag builds are published by the *Container* workflow, which runs on every
+version tag and can be started manually for `main`.
 
 The Docker files live in the `docker/` folder: a `Dockerfile`, an entrypoint
 script, a `docker-compose.yml` and the ignore rules for the build context.
@@ -385,7 +391,7 @@ all interfaces, and reports health via the public `/health` endpoint.
   ```yaml
   services:
     retentacle:
-      image: ghcr.io/exxamalte/retentacle:latest
+      image: ghcr.io/exxamalte/retentacle:main
       volumes:
         - retentacle-data:/data
       environment:
@@ -406,6 +412,47 @@ all interfaces, and reports health via the public `/health` endpoint.
   ```commandline
   docker run --rm -v retentacle-data:/data retentacle --once --configuration /data/configuration.yaml
   ```
+
+### When the data folder cannot be written
+
+`PermissionError: '/data/retentacle_settings.json'` means the server may not
+write its databases. Current builds refuse to start in that state instead of
+running without persistence, and both the entrypoint and the server say what
+they found:
+
+```text
+entrypoint: data folder /data 0:0 -> 10001:10001, running as 10001:10001
+ERROR:retentacle.cli:Unable to run Retentacle: Data folder /data cannot be used ([Errno 13] Permission denied: '/data/.write-test'). Found: /data is owned by 0:0 mode 0755; the server runs as 10001:10001; /data is a bind mount (ro,relatime). Remedy: mount the folder read-write … In a container, an image older than the PUID/PGID entrypoint never adjusts a root-owned mount; the current build is ghcr.io/exxamalte/retentacle:main.
+```
+
+The `Found:` line is the part to look at: it reports who owns the folder, who
+the server is running as, the filesystem and mount options, and whether SELinux
+is enforcing — which of the causes below applies falls out of it.
+
+Work through the causes in this order:
+
+1. **Check that the running image is current.** A tag is only a name, and a
+   container manager may keep using a cached build:
+   `docker image inspect <image> --format 'user={{.Config.User}} entrypoint={{.Config.Entrypoint}} created={{.Created}}'`.
+   An image with `user=retentacle` predates the PUID/PGID entrypoint and can
+   never repair a root-owned bind mount; `user=` (empty) plus
+   `entrypoint=['/entrypoint.sh']` is what a current image reports. Re-pull
+   (Portainer: *Re-pull image*) or rebuild before recreating the container.
+2. **Let the entrypoint fix the folder.** It needs to start as root, so remove
+   any `user:` setting from the container or stack, and set `PUID`/`PGID` to
+   the owner of the host folder if the files should stay editable there.
+3. **SELinux (Fedora, RHEL, openSUSE, …).** Run `getenforce` on the host. With
+   `Enforcing`, ownership is correct but the security label still denies
+   writes — add `:z` to the bind mount (`/host/path:/data:z`), relabel it with
+   `chcon -Rt container_file_t /host/path`, or use a named volume.
+4. **Read-only or remote mounts.** NFS exports with `root_squash` reject the
+   startup `chown` (the entrypoint logs a warning) and read-only mounts reject
+   writes entirely. Match `PUID`/`PGID` to the folder owner, fix the export
+   mapping, or use a named volume.
+5. **No host terminal needed at all:** a named volume. Create one in Portainer
+   under *Volumes*, mount it at `/data`, and nothing has to be chowned — the
+   image pre-creates `/data` with the right ownership and an empty volume
+   inherits it.
 
 ## One-shot backup
 

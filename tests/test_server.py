@@ -2,8 +2,11 @@
 
 import base64
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
+import os
+from pathlib import Path
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -13,10 +16,14 @@ import pytest
 
 from retentacle import updates
 from retentacle.configuration import Configuration
+from retentacle.consts import SETTINGS_FILENAME
 from retentacle.discovery import DiscoveredDevice
 from retentacle.oidc import OIDCError
 from retentacle.server import (
+    _describe_mount,
     _effective_ip_addresses,
+    _effective_schedule,
+    _FolderState,
     _format_bytes,
     _format_datetime_local,
     _format_duration,
@@ -24,12 +31,15 @@ from retentacle.server import (
     _format_interval_value,
     _format_timestamp,
     _interval_form_values,
+    _is_read_only,
     _parse_datetime_local,
     _parse_ip_addresses,
     _recent_backup_cutoff,
+    _require_writable_target_folder,
     _save_last_automatic_run,
     _saved_ip_addresses,
     _saved_last_automatic_duration,
+    _saved_last_automatic_start,
     create_app,
     run_server,
 )
@@ -3851,3 +3861,213 @@ class TestToastNotifications:
 
         assert response.status_code == 401
         assert '<div class="alert"' in response.text
+
+
+class TestDataFolderGuard:
+    """Tests for the startup check on the data folder."""
+
+    def test_writable_folder_passes_without_leftovers(self):
+        """Test a usable data folder is accepted and cleaned up again."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None, interval=0)
+
+            data_dir = _require_writable_target_folder(config)
+
+            assert data_dir == Path(tmpdir)
+            assert not (data_dir / ".write-test").exists()
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores folder modes")
+    def test_unwritable_folder_explains_the_remedy(self):
+        """Test the failure names the Docker causes and their fixes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            locked = Path(tmpdir) / "locked"
+            locked.mkdir(mode=0o500)
+            config = Configuration(None, str(locked), None, interval=0)
+
+            with pytest.raises(OSError, match="cannot be used") as excinfo:
+                _require_writable_target_folder(config)
+
+        message = str(excinfo.value)
+        assert "cannot be used" in message
+        # The message names the offending folder, the facts about it, and the
+        # current image; the cause-specific advice is covered separately.
+        assert str(locked) in message
+        assert "Found:" in message
+        assert "is owned by" in message
+        assert "the server runs as" in message
+        assert "Remedy:" in message
+        assert ":main" in message
+
+
+class TestScheduleAnchorRecovery:
+    """Tests for recovering the backup schedule after a restart."""
+
+    def _store(self, tmpdir, settings):
+        """Create a store with the given settings and return it with the config."""
+        config = Configuration(None, tmpdir, None, interval=0)
+        store = BackupStore(config.database_path())
+        store.save_settings(settings)
+        return config, store
+
+    def test_missing_pending_slot_uses_the_last_automatic_run(self):
+        """Test the saved run keeps the schedule instead of the start time."""
+        started = datetime.now(UTC) - timedelta(hours=1)
+        settings = {
+            "automatic_backups": True,
+            "interval": 86400,
+            "last_automatic_run_at": (started + timedelta(seconds=40)).isoformat(),
+            "last_automatic_duration": 40,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config, store = self._store(tmpdir, settings)
+
+            enabled, interval, next_run, anchor = _effective_schedule(config, store)
+
+        assert enabled is True
+        assert interval == 86400
+        assert next_run is None
+        # The saved completion time is 40 s after the start, and the start of
+        # the run is what the schedule grid is anchored to.
+        assert anchor is not None
+        assert abs((anchor - started).total_seconds()) < 2
+
+    def test_without_any_saved_state_nothing_is_anchored(self):
+        """Test a first installation has no anchor to recover from."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config, store = self._store(
+                tmpdir, {"automatic_backups": True, "interval": 86400}
+            )
+
+            assert _effective_schedule(config, store) == (True, 86400, None, None)
+
+    def test_invalid_saved_timestamp_is_ignored(self):
+        """Test a corrupt timestamp does not break the schedule."""
+        settings = {
+            "automatic_backups": True,
+            "interval": 86400,
+            "next_run_at": "not-a-date",
+            "last_automatic_run_at": "also-not-a-date",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config, store = self._store(tmpdir, settings)
+
+            assert _effective_schedule(config, store) == (True, 86400, None, None)
+
+    def test_duration_is_optional(self):
+        """Test the completion time is used when no duration was saved."""
+        completed = datetime.now(UTC)
+        assert (
+            _saved_last_automatic_start(
+                {"last_automatic_run_at": completed.isoformat()}
+            )
+            == completed
+        )
+        assert _saved_last_automatic_start({"last_automatic_duration": 40}) is None
+
+    def test_app_recovery_schedules_the_slot_not_the_restart(self):
+        """Test a started app waits for the grid slot instead of backing up."""
+        anchor = datetime.now(UTC) - timedelta(hours=1)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config, store = self._store(
+                tmpdir,
+                {
+                    "automatic_backups": True,
+                    "interval": 86400,
+                    "last_automatic_run_at": anchor.isoformat(),
+                },
+            )
+            users = UserStore(config.users_path(), pbkdf2_iterations=1)
+            users.create_user(_ADMIN_EMAIL, _ADMIN_PASSWORD, UserRole.ADMIN)
+            app = create_app(config, store=store, users=users)
+            scheduler = app.state.scheduler
+
+            with TestClient(app):
+                assert scheduler.run_count == 0
+                expected = anchor + timedelta(seconds=86400)
+                assert abs((scheduler.next_run - expected).total_seconds()) < 10
+
+
+class TestDataFolderDiagnosis:
+    """Tests for explaining an unusable data folder precisely."""
+
+    # Excerpt of /proc/self/mountinfo from a Docker host with a bind mount.
+    _MOUNTINFO = [
+        "1 0 8:1 / / rw,relatime - ext4 /dev/sda1 rw",
+        "36 1 0:35 / /data rw,relatime - tmpfs tmpfs rw,mode=0755",
+        "41 36 8:2 /srv/retentacle /data/nested ro,nosuid - xfs /dev/sdb1 ro",
+        "44 1 0:40 / /run/rpc_pipefs rw,relatime - rpc_pipefs sunrpc rw",
+    ]
+
+    def test_mount_details_pick_the_most_specific_entry(self):
+        """Test the deepest covering mount is used for the description."""
+        assert _describe_mount(self._MOUNTINFO, "/data") == ("tmpfs", "rw,relatime")
+        assert _describe_mount(self._MOUNTINFO, "/data/nested/db.json") == (
+            "xfs",
+            "ro,nosuid",
+        )
+        # Everything else falls back to the root mount.
+        assert _describe_mount(self._MOUNTINFO, "/etc/hostname") == (
+            "ext4",
+            "rw,relatime",
+        )
+
+    def test_mount_details_ignores_incomplete_lines(self):
+        """Test truncated mountinfo lines are skipped."""
+        assert _describe_mount(["garbage", "2 1 8:1 /"], "/data") is None
+        assert _describe_mount([], "/data") is None
+
+    def test_read_only_detection_uses_option_boundaries(self):
+        """Test only a real read-only flag counts, not option substrings."""
+        assert _is_read_only(("xfs", "ro,nosuid")) is True
+        assert _is_read_only(("ext4", "rw,relatime")) is False
+        assert _is_read_only(("ext4", "size=root")) is False
+        assert _is_read_only(None) is False
+
+    def test_stored_database_is_checked_not_only_the_folder(self):
+        """Test a read-only database inside a writable folder still fails."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data = Path(tmpdir)
+            stored = data / SETTINGS_FILENAME
+            stored.write_text("{}", encoding="utf-8")
+            os.chmod(stored, 0o444)
+            config = Configuration(None, tmpdir, None, interval=0)
+
+            with pytest.raises(OSError, match=SETTINGS_FILENAME) as excinfo:
+                _require_writable_target_folder(config)
+
+        assert "chmod u+w" in str(excinfo.value)
+
+    def test_healthy_folder_reports_no_remedy(self):
+        """Test the collected facts of a usable folder need no repair hints."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = _FolderState.collect(Path(tmpdir))
+
+        assert state.read_only is False
+        assert not state.foreign_files
+        assert any("the server runs as" in item for item in state.evidence())
+
+    def test_foreign_owner_and_selinux_produce_their_own_advice(self):
+        """Test each container cause is named only when it is present."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data = Path(tmpdir)
+            foreign = _FolderState(
+                path=data,
+                folder_owner="0:0",
+                folder_mode="0755",
+                file_owners={SETTINGS_FILENAME: "0:0"},
+                process_owner="10001:10001",
+                mount=("ext4", "rw,relatime"),
+                read_only=False,
+                selinux=None,
+            )
+            squashed = replace(foreign, file_owners={})
+            labelled = replace(foreign, selinux="enforcing", folder_owner="10001:10001")
+            readonly = replace(foreign, mount=("nfs", "ro,relatime"), read_only=True)
+
+            text = "; ".join(foreign.remedies())
+            assert "user:" in text
+            assert "chown" in text
+            assert SETTINGS_FILENAME in text
+            assert SETTINGS_FILENAME not in "; ".join(squashed.remedies())
+            assert ":z" in "; ".join(labelled.remedies())
+            assert "read-write" in "; ".join(readonly.remedies())

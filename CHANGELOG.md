@@ -13,6 +13,9 @@
 * Show the total size of all backups on disk and the duration of the last automatic backup as dashboard cards on the overview.
 * Show flash messages as auto-dismissing toast overlays instead of banners that shift the page content.
 * Fix host bind-mount permissions out of the box: the container now takes ownership of the data folder at startup and drops to the unprivileged PUID/PGID user.
+* Refuse to start when the data folder or a stored database cannot be written, logging who owns the folder, which user the server runs as, the mount options and the SELinux mode, plus the matching remedy — and exit non-zero so supervisors report the failure instead of a container that silently keeps no state.
+* Log what the container entrypoint did with the data folder and which user the server runs as.
+* Keep the configured backup time across restarts: when the pending slot is unknown, the schedule is recovered from the last automatic backup instead of re-anchoring to the restart time, and slots missed while the server was down are caught up in a single run.
 * Move the "Run backup now" button from the top bar to the dashboard header and add an "Add devices" shortcut to the settings device section.
 * Arrange the overview stat cards in a fixed three-column grid on wide screens.
 * Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
