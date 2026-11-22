@@ -8,22 +8,13 @@
   </p>
 
   {% if request.query_params.get('backup_done') %}
-    <div class="notice" role="status">
-      Backup completed for {{ display_name }}.
-    </div>
+    <script>showToast({{ "Backup completed for %s."|format(display_name)|tojson }}, "success");</script>
   {% elif request.query_params.get('backup_failed') %}
-    <div class="alert" role="alert">
-      <strong>Backup failed</strong> for {{ display_name }}. Check the server log for details.
-    </div>
+    <script>showToast({{ "Backup failed for %s. Check the server log for details."|format(display_name)|tojson }}, "error");</script>
   {% elif request.query_params.get('automatic') == 'on' %}
-    <div class="notice" role="status">
-      {{ display_name }} is now included in automatic backups.
-    </div>
+    <script>showToast({{ "%s is now included in automatic backups."|format(display_name)|tojson }}, "success");</script>
   {% elif request.query_params.get('automatic') == 'off' %}
-    <div class="notice" role="status">
-      {{ display_name }} no longer receives automatic backups. Manual backups
-      stay available.
-    </div>
+    <script>showToast({{ "%s no longer receives automatic backups. Manual backups stay available."|format(display_name)|tojson }}, "info");</script>
   {% endif %}
 
   <div class="page-header device-header">

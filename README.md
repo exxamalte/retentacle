@@ -274,6 +274,8 @@ or within the last 24 hours when automatic backups are disabled. The
 **Last automatic backup** card follows scheduled runs only — manually started
 backups, including single-device ones, do not move it.
 
+Transient messages — a started or finished backup, saved settings, a failed form — appear as auto-dismissing toast notifications in the lower-right corner, overlaying the page instead of shifting tables and buttons down. They stack, close on click, and announce themselves politely to screen readers.
+
 Shelly devices usually serve their own configuration page over HTTP, so each
 device's web UI can be opened in a new tab from the overview icon or the detail
 page link. It opens `http://<ip-address>`; the backup tool does not proxy or

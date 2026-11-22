@@ -23,19 +23,13 @@
   </div>
 
   {% if request.query_params.get('backup_started') %}
-    <div class="notice" role="status">
-      Backup started. New results will appear here when the run finishes.
-    </div>
+    <script>showToast("Backup started. New results will appear here when the run finishes.", "info");</script>
   {% endif %}
 
   {% if request.query_params.get('backup_done') %}
-    <div class="notice" role="status">
-      Backup completed. New results will appear here.
-    </div>
+    <script>showToast("Backup completed. New results will appear here.", "success");</script>
   {% elif request.query_params.get('backup_failed') %}
-    <div class="alert" role="alert">
-      <strong>Backup failed.</strong> Check the server log for details.
-    </div>
+    <script>showToast("Backup failed. Check the server log for details.", "error");</script>
   {% endif %}
 
   {% if scheduler.last_error %}

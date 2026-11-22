@@ -916,6 +916,81 @@
       font-size: 0.8rem;
     }
 
+    .toast-container {
+      position: fixed;
+      right: 1.25rem;
+      bottom: 1.25rem;
+      z-index: 60;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.6rem;
+      max-width: calc(100vw - 2.5rem);
+      pointer-events: none;
+    }
+
+    .toast {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.8rem 0.9rem;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0.7rem;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      color: var(--text);
+      font-size: 0.9rem;
+      pointer-events: auto;
+      animation: toast-in 180ms ease;
+    }
+
+    .toast.success {
+      border-left-color: var(--success);
+    }
+
+    .toast.error {
+      border-left-color: var(--danger);
+    }
+
+    .toast.leaving {
+      opacity: 0;
+      transform: translateY(0.5rem);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    .toast-close {
+      border: 0;
+      background: none;
+      color: var(--muted);
+      font-size: 1.05rem;
+      line-height: 1;
+      padding: 0 0.1rem;
+      cursor: pointer;
+    }
+
+    .toast-close:hover {
+      color: var(--text);
+    }
+
+    @keyframes toast-in {
+      from {
+        opacity: 0;
+        transform: translateY(0.6rem);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .toast {
+        animation: none;
+        transition: none;
+      }
+    }
+
     .site-disclaimer {
       max-width: 46rem;
       margin: 3rem auto 0;
@@ -1006,8 +1081,42 @@
       }
     }
   </style>
+  <script>
+    function showToast(message, kind) {
+      const container = document.getElementById("toasts");
+      if (!container) {
+        return;
+      }
+      const toast = document.createElement("div");
+      toast.className = "toast " + (kind || "info");
+      const text = document.createElement("span");
+      text.textContent = message;
+      const close = document.createElement("button");
+      close.className = "toast-close";
+      close.type = "button";
+      close.setAttribute("aria-label", "Dismiss notification");
+      close.textContent = "\u00d7";
+      let dismissed = false;
+      const dismiss = () => {
+        if (dismissed) {
+          return;
+        }
+        dismissed = true;
+        toast.classList.add("leaving");
+        window.setTimeout(() => toast.remove(), 200);
+      };
+      close.addEventListener("click", dismiss);
+      toast.append(text, close);
+      container.append(toast);
+      window.setTimeout(dismiss, 6000);
+      while (container.children.length > 4) {
+        container.firstChild.remove();
+      }
+    }
+  </script>
 </head>
 <body>
+  <div class="toast-container" id="toasts" role="status" aria-live="polite"></div>
   <svg class="icon-sprite" aria-hidden="true">
     <symbol id="icon-backups" viewBox="0 0 24 24">
       <line x1="4" y1="6" x2="4.01" y2="6"/>

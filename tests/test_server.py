@@ -3795,3 +3795,59 @@ class TestDeviceAutomaticToggle:
                 )
 
                 assert response.status_code == 404
+
+
+class TestToastNotifications:
+    """Tests for flash messages rendered as overlay toasts."""
+
+    def test_flash_messages_render_as_toasts(self):
+        """Test flashes appear as toast scripts without layout blocks."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                text = client.get("/?backup_started=1").text
+
+                assert 'id="toasts"' in text
+                assert "function showToast" in text
+                assert 'showToast("Backup started' in text
+                assert '<div class="notice"' not in text
+
+    def test_device_flash_escapes_names(self):
+        """Test device names with quotes render safely in toast scripts."""
+        record = _record()
+        record["device_info"] = {"gen": 2, "name": 'Kitchen "Special"'}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[record])
+            with _client(app) as client:
+                text = client.get("/devices/192.168.1.10?automatic=on").text
+
+        assert 'showToast("Kitchen \\"Special\\" is now included' in text
+
+    def test_settings_error_renders_as_error_toast(self):
+        """Test validation failures use the toast error variant."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings/retention", data={"retention_monthly": "abc"}
+                )
+
+        assert response.status_code == 400
+        assert 'showToast("Could not save settings' in response.text
+        assert (
+            '<div class="alert"'
+            not in response.text.split('aria-label="Backup schedule"')[0]
+        )
+
+    def test_login_error_stays_inline(self):
+        """Test the login card keeps its inline error alert."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/login",
+                    data={"email": _ADMIN_EMAIL, "password": "totally-wrong-pass"},
+                )
+
+        assert response.status_code == 401
+        assert '<div class="alert"' in response.text
