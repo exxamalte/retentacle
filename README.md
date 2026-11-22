@@ -323,6 +323,10 @@ name and `sha-<commit>`, never `latest`.
 The Docker files live in the `docker/` folder: a `Dockerfile`, an entrypoint
 script, a `docker-compose.yml` and the ignore rules for the build context.
 
+With UI managers like Portainer, either create a volume in the Volumes tab
+and map it to `/data`, or set the `PUID`/`PGID` environment variables to the
+owner of your host folder — no terminal needed in either case.
+
 Build and start the container with Docker Compose:
 
 ```commandline
@@ -344,8 +348,10 @@ all interfaces, and reports health via the public `/health` endpoint.
 * **Data** — everything Retentacle stores (the `retentacle_backups.json`,
   `retentacle_settings.json` and `retentacle_users.json` databases) lives in
   `/data` inside the container. Keep it on a named volume, as in the compose
-  example, or bind-mount a folder; with a bind mount make sure the folder is
-  writable by UID 10001, the user the container runs as.
+  example, or bind-mount a host folder. Since the entrypoint chowns the data
+  folder at startup, a fresh (root-owned) bind mount needs no manual setup;
+  on read-only or NFS mounts where chown cannot work, match `PUID`/`PGID` to
+  the folder's owner instead.
 * **Configuration via environment** — startup options are configured with
   environment variables instead of hand-written commands:
 
@@ -353,7 +359,8 @@ all interfaces, and reports health via the public `/health` endpoint.
   | --- | --- | --- |
   | `RETENTACLE_HOST` | `0.0.0.0` | Bind address inside the container |
   | `RETENTACLE_PORT` | `8080` | HTTP port inside the container (the health check follows it; adjust the port mapping, e.g. `-e RETENTACLE_PORT=9000 -p 9000:9000`) |
-  | `RETENTACLE_DATA_DIR` | `/data` | Where the databases are stored. The image pre-creates this default with the right ownership, so an empty named volume mounted at `/data` "just works"; any other path must be mounted and writable by UID 10001 (the Docker `VOLUME` instruction cannot follow the variable, so the mount hint stays `/data`) |
+  | `RETENTACLE_DATA_DIR` | `/data` | Where the databases are stored. The image pre-creates this default with the right ownership, so an empty named volume mounted at `/data` "just works" (the Docker `VOLUME` instruction cannot follow the variable, so the mount hint stays `/data`) |
+  | `PUID` / `PGID` | `10001` | User/group the server runs as. The container starts as root, **takes ownership of the data folder once at startup**, then drops to these IDs — so fresh root-owned host bind mounts (the default when Docker creates them) work without any manual `chown` on the host. Set them to your host folder's owner, e.g. `PUID=1000 PGID=1000`, to keep files directly readable/editable as your user |
   | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Reverse-proxy support, see below |
   | `RETENTACLE_UPDATE_CHECK` / `RETENTACLE_UPDATE_REPO` / `RETENTACLE_UPDATE_TOKEN` | — | Update check, see below |
 

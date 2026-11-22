@@ -12,6 +12,7 @@
 * Show the tagline "Tentacles for your Shelly backups." under the name in the header.
 * Show the total size of all backups on disk and the duration of the last automatic backup as dashboard cards on the overview.
 * Show flash messages as auto-dismissing toast overlays instead of banners that shift the page content.
+* Fix host bind-mount permissions out of the box: the container now takes ownership of the data folder at startup and drops to the unprivileged PUID/PGID user.
 * Move the "Run backup now" button from the top bar to the dashboard header and add an "Add devices" shortcut to the settings device section.
 * Arrange the overview stat cards in a fixed three-column grid on wide screens.
 * Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
