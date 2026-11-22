@@ -46,23 +46,29 @@ class UpdateInfo:
 
 
 def _split_version(value: str) -> tuple[tuple[int, ...], bool]:
-    """Return the numeric parts and the development flag of a version."""
+    """Return the numeric release part and the pre-release flag."""
     text = value.strip().lower().removeprefix("v")
-    numbers = tuple(int(part) for part in re.findall(r"\d+", text))
-    return numbers, "dev" in text
+    match = re.match(r"^(\d+(?:\.\d+)*)(.*)$", text)
+    if match is None:
+        return (), True
+    numbers = tuple(int(part) for part in match.group(1).split("."))
+    prerelease = bool(re.search(r"(dev|alpha|beta|rc|b\d*)", match.group(2)))
+    return numbers, prerelease
 
 
 def _is_newer(candidate: str, current: str) -> bool:
-    """Compare CalVer versions, treating development builds as pre-release."""
-    candidate_parts, candidate_dev = _split_version(candidate)
-    current_parts, current_dev = _split_version(current)
+    """Compare CalVer versions; pre-releases are never announced as newer."""
+    candidate_parts, candidate_pre = _split_version(candidate)
+    current_parts, current_pre = _split_version(current)
+    if candidate_pre:
+        return False
     size = max(len(candidate_parts), len(current_parts))
     normalized_candidate = candidate_parts + (0,) * (size - len(candidate_parts))
     normalized_current = current_parts + (0,) * (size - len(current_parts))
     if normalized_candidate != normalized_current:
         return normalized_candidate > normalized_current
     # Same numbers: the stable release is newer than a development build.
-    return current_dev and not candidate_dev
+    return current_pre
 
 
 def current_version() -> str:
@@ -119,14 +125,21 @@ def refresh_update_info() -> UpdateInfo | None:
         )
         if response.status_code == httpx.codes.OK:
             release = response.json()
-            tag = release.get("tag_name") or release.get("name") or ""
-            url = release.get("html_url") or f"https://github.com/{repo}/releases"
-            if isinstance(tag, str) and tag.strip():
-                info = UpdateInfo(
-                    current=current_version(),
-                    latest=tag.strip(),
-                    html_url=url if isinstance(url, str) else "",
-                )
+            # /releases/latest should never include drafts or pre-releases;
+            # ignore them defensively, and treat pre-release-looking tags
+            # the same way.
+            if not release.get("prerelease") and not release.get("draft"):
+                tag = release.get("tag_name") or release.get("name") or ""
+                _, tag_pre = _split_version(str(tag).strip())
+                if isinstance(tag, str) and tag.strip() and not tag_pre:
+                    url = (
+                        release.get("html_url") or f"https://github.com/{repo}/releases"
+                    )
+                    info = UpdateInfo(
+                        current=current_version(),
+                        latest=tag.strip(),
+                        html_url=url if isinstance(url, str) else "",
+                    )
     except httpx.HTTPError, ValueError:
         _LOGGER.debug("Unable to check for Retentacle updates", exc_info=True)
 

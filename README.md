@@ -172,9 +172,20 @@ without internet access (it just never shows the badge).
 Requirements and options:
 
 * **GitHub releases are required.** The check calls the GitHub Releases API
-  (`/releases/latest`) of `exxamalte/retentacle`, which returns the newest
-  **published, non-prerelease Release** — pushing a `v*` tag alone is not
-  enough; the tag needs a Release created from it.
+  (`/releases/latest`) of the project repository. The **Release workflow**
+  published in this repository automatically creates a GitHub Release from
+  every pushed `v*` tag, so tagging a version is all it takes — no manual
+  release step.
+* **Pre-releases are never announced.** Only plain numeric versions such as
+  `v2026.6.0` can light up the badge. Tags with any appended suffix —
+  `-dev`, `-alpha`, `-beta`, `-rc`, `.dev1`, `b1` and similar — are
+  classified as pre-releases: the Release workflow creates them marked as
+  pre-release (and keeps them out of GitHub's "latest"), and the in-app
+  check defensively ignores any release flagged `prerelease` or `draft`.
+* To cut a release, bump the version in `pyproject.toml`, tag and push:
+  * stable: `v2026.6.0` → full Release, becomes "latest", triggers the badge
+  * preview: `v2026.6.0-beta1` (or `-alpha`, `-rc`, `b1`) → pre-release
+    Release; existing installs are not prompted to update to it
 * The project repository is public, so no token is needed. It talks to
   `api.github.com` anonymously (at most ~4 requests/day thanks to the cache,
   far below the 60/hour limit). For a **private** repository (e.g. your own

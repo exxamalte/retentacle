@@ -9,13 +9,15 @@ from retentacle import updates
 from retentacle.updates import UpdateInfo, _is_newer, cached_update, refresh_update_info
 
 
-def _release_response(tag, status_code=200):
+def _release_response(tag, status_code=200, prerelease=False, draft=False):
     """Create a mock GitHub releases API response."""
     response = Mock()
     response.status_code = status_code
     response.json.return_value = {
         "tag_name": tag,
         "html_url": f"https://github.com/exxamalte/retentacle/releases/tag/{tag}",
+        "prerelease": prerelease,
+        "draft": draft,
     }
     return response
 
@@ -37,14 +39,19 @@ class TestVersionComparison:
         [
             ("v2026.6.0", "2026.5.0", True),
             ("v2026.5.0", "2026.5.0.dev0", True),
+            ("v2026.5.0", "2026.5.0.dev1", True),
             ("v2026.5.0", "2026.5.0", False),
             ("v2026.4.0", "2026.5.0.dev0", False),
             ("v2027.1.0", "2026.12.0", True),
             ("2026.5.1", "v2026.5.0", True),
+            ("v2026.6.0b1", "2026.6.0", False),
+            ("v2027.0.0-beta1", "2026.6.0", False),
+            ("v2027.0.0-alpha.2", "2027.0.0.dev0", False),
+            ("v2027.0.0-rc3", "2026.6.0", False),
         ],
     )
     def test_is_newer(self, latest, current, expected):
-        """Test version comparisons including development builds."""
+        """Test version comparisons including pre-releases and dev builds."""
         assert _is_newer(latest, current) is expected
 
 
@@ -106,6 +113,27 @@ class TestUpdateFetch:
     def test_missing_release_returns_none(self):
         """Test repositories without GitHub releases stay silent."""
         with patch("httpx.get", return_value=_release_response("", status_code=404)):
+            assert refresh_update_info() is None
+
+    def test_prerelease_flag_is_ignored(self):
+        """Test releases marked as pre-release never become the latest."""
+        with patch(
+            "httpx.get",
+            return_value=_release_response("v9999.0.0", prerelease=True),
+        ):
+            assert refresh_update_info() is None
+
+    def test_draft_flag_is_ignored(self):
+        """Test draft releases are ignored."""
+        with patch(
+            "httpx.get",
+            return_value=_release_response("v9999.0.0", draft=True),
+        ):
+            assert refresh_update_info() is None
+
+    def test_prerelease_tag_without_flag_is_ignored(self):
+        """Test beta-style tags are skipped even without the API flag."""
+        with patch("httpx.get", return_value=_release_response("v9999.0.0-beta1")):
             assert refresh_update_info() is None
 
     def test_disabled_via_environment(self, monkeypatch):
