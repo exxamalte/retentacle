@@ -47,9 +47,10 @@ class Backup:
                 _LOGGER.info("Discovering Shelly devices via mDNS...")
                 ip_addresses = discover_shelly_devices()
         if not ip_addresses:
-            _LOGGER.warning(
-                "No IP addresses of Shelly devices specified. Unable to continue."
-            )
+            # Not an error: a fresh installation or a server without devices
+            # configured yet. Callers with more context (the CLI, the
+            # scheduler, the web UI) report what to do about it.
+            _LOGGER.info("No Shelly devices to back up — nothing to do.")
             if on_start is not None:
                 on_start(0)
             return []

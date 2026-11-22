@@ -246,9 +246,12 @@ class BackupScheduler:
                     self._on_progress,
                     automatic=automatic,
                 )
-                _LOGGER.info(
-                    "Backup completed for %d device(s)", len(self.last_backed_up)
-                )
+                if self.last_backed_up:
+                    _LOGGER.info(
+                        "Backup completed for %d device(s)", len(self.last_backed_up)
+                    )
+                else:
+                    _LOGGER.info("Backup finished without storing anything")
             except Exception as exc:  # noqa: BLE001
                 self.last_error = str(exc) or exc.__class__.__name__
                 _LOGGER.exception("Backup run failed")
@@ -294,7 +297,9 @@ class BackupScheduler:
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Unable to save the last automatic backup duration")
 
-    def _next_after_run(self, scheduled: datetime | None) -> datetime:
+    def _next_after_run(
+        self, scheduled: datetime | None, *, fix_anchor: bool = True
+    ) -> datetime:
         """Return the next run on the fixed schedule grid.
 
         The grid origin is the user-selected date and time (or the slot of
@@ -302,6 +307,10 @@ class BackupScheduler:
         catch-up runs move to the next grid slot instead of shifting the
         whole schedule to the completion time, so a backup configured for
         3am keeps running at 3am.
+
+        ``fix_anchor`` is turned off for skipped runs: without devices there
+        is no backup whose time could define the schedule, so the origin stays
+        free for the first run that actually stores something.
         """
         now = datetime.now(UTC)
         interval = self._interval if self._interval > 0 else 3600
@@ -311,8 +320,9 @@ class BackupScheduler:
         candidate = anchor + timedelta(seconds=steps * interval)
         if candidate <= now:
             candidate += timedelta(seconds=interval)
-        # Fix the grid origin so subsequent runs stay on the same slots.
-        self._anchor_at = anchor
+        if fix_anchor:
+            # Fix the grid origin so subsequent runs stay on the same slots.
+            self._anchor_at = anchor
         return candidate
 
     async def _wait_for_next_run(self) -> None:
@@ -346,9 +356,34 @@ class BackupScheduler:
             if not self.enabled:
                 continue
             scheduled_next_run = self._next_run_at
-            await self.run_once(automatic=True)
+            ran = self.has_devices()
+            if ran:
+                await self.run_once(automatic=True)
+            else:
+                # Nothing to back up. Say so instead of reporting a completed
+                # run of zero devices, and do not touch the last-run record:
+                # the dashboard would then claim a fresh automatic backup that
+                # never stored anything.
+                _LOGGER.info(
+                    "No devices configured; skipping the automatic backup. "
+                    "Add devices on the Settings page to start backing up."
+                )
             if not self.enabled or self._next_run_at != scheduled_next_run:
                 # The schedule changed while the backup was running. Keep the
                 # user's new next-run selection.
                 continue
-            self._update_next_run(self._next_after_run(scheduled_next_run))
+            self._update_next_run(
+                self._next_after_run(scheduled_next_run, fix_anchor=ran)
+            )
+
+    def has_devices(self) -> bool:
+        """Whether a run would include at least one device."""
+        if self._ip_addresses_provider is None:
+            # Without a provider the backup reads the configuration file and
+            # reports an empty device list itself.
+            return True
+        try:
+            return bool(self._ip_addresses_provider())
+        except Exception:  # noqa: BLE001
+            # Let the run report configuration problems like any other failure.
+            return True

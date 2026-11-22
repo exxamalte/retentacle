@@ -793,13 +793,14 @@ class TestServer:
     def test_trigger_backup(self):
         """Test triggering a backup run."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = _create_app(tmpdir)
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["192.168.1.10"]})
             with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
                 response = client.post("/backup", follow_redirects=False)
 
-                scheduler.run_once.assert_awaited_once_with(None)
+                scheduler.run_once.assert_awaited_once_with(["192.168.1.10"])
 
         assert response.status_code == 303
         assert response.headers["location"] == "/?backup_started=1"
@@ -807,7 +808,7 @@ class TestServer:
     def test_trigger_backup_marks_run_as_queued(self):
         """Test that triggering a backup makes it visible as active immediately."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = _create_app(tmpdir)
+            app, _ = _create_app(tmpdir, records=[_record()])
             with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
@@ -834,7 +835,7 @@ class TestServer:
     def test_trigger_backup_returns_to_settings(self):
         """Test that triggering a backup can return to the settings page."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = _create_app(tmpdir)
+            app, _ = _create_app(tmpdir, records=[_record()])
             with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
@@ -849,7 +850,7 @@ class TestServer:
     def test_trigger_backup_rejects_unknown_page(self):
         """Test that triggering a backup only redirects to known pages."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = _create_app(tmpdir)
+            app, _ = _create_app(tmpdir, records=[_record()])
             with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
@@ -874,7 +875,7 @@ class TestServer:
     def test_trigger_backup_rejects_unsafe_redirect(self, redirect):
         """Test that the redirect target cannot leave the application."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = _create_app(tmpdir)
+            app, _ = _create_app(tmpdir, records=[_record()])
             with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
@@ -889,7 +890,7 @@ class TestServer:
     def test_trigger_backup_drops_redirect_query(self):
         """Test that only the redirect path is used."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = _create_app(tmpdir)
+            app, _ = _create_app(tmpdir, records=[_record()])
             with _client(app) as client:
                 scheduler = app.state.scheduler
                 scheduler.run_once = AsyncMock()
@@ -4071,3 +4072,46 @@ class TestDataFolderDiagnosis:
             assert SETTINGS_FILENAME not in "; ".join(squashed.remedies())
             assert ":z" in "; ".join(labelled.remedies())
             assert "read-write" in "; ".join(readonly.remedies())
+
+
+class TestBackupRunWithoutDevices:
+    """Tests for starting a backup while nothing is configured."""
+
+    def test_run_is_not_started(self):
+        """Test the backup button does not start an empty run."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post("/backup", follow_redirects=False)
+
+                scheduler.run_once.assert_not_awaited()
+                assert scheduler.queued is False
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/?backup_empty=1"
+
+    def test_empty_run_is_reported_as_such(self):
+        """Test the dashboard explains why nothing was backed up."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                text = client.get("/?backup_empty=1").text
+
+        assert 'showToast("No devices configured yet' in text
+        assert "Backup started" not in text
+
+    def test_configured_devices_start_the_run(self):
+        """Test a saved device list makes the button work as before."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["192.168.1.10"]})
+            with _client(app) as client:
+                scheduler = app.state.scheduler
+                scheduler.run_once = AsyncMock()
+                response = client.post("/backup", follow_redirects=False)
+
+                scheduler.run_once.assert_awaited_once_with(["192.168.1.10"])
+
+        assert response.headers["location"] == "/?backup_started=1"

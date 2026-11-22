@@ -886,3 +886,91 @@ class TestScheduleRecoveryAfterRestart:
             await scheduler.stop()
 
         assert scheduler.run_count == 1
+
+
+class TestScheduledRunWithoutDevices:
+    """Tests for scheduled runs while no device is configured."""
+
+    @pytest.mark.asyncio
+    async def test_run_is_skipped_and_not_recorded(self):
+        """Test an empty device list neither runs nor reports a finished run."""
+        backup = RecordingBackup()
+        finished = []
+        scheduler = BackupScheduler(
+            backup,
+            86400,
+            next_run_at=datetime.now(UTC),
+            ip_addresses_provider=list,
+            on_run_finished=lambda completed, duration: finished.append(completed),
+        )
+
+        await scheduler.start()
+        try:
+            await asyncio.sleep(0.2)
+
+            assert backup.calls == []
+            assert scheduler.run_count == 0
+            assert scheduler.last_run is None
+            assert finished == []
+            assert scheduler.next_run > datetime.now(UTC)
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_skip_does_not_fix_the_grid_origin(self):
+        """Test a skipped run leaves the schedule time for the first real run."""
+        scheduler = BackupScheduler(RecordingBackup(), 3600, ip_addresses_provider=list)
+
+        await scheduler.start()
+        try:
+            await asyncio.sleep(0.2)
+
+            # Nothing ran, so the startup moment must not become the daily
+            # backup time; the first real run (or an explicit choice in the
+            # settings) still decides it.
+            assert scheduler._anchor_at is None  # noqa: SLF001
+            assert scheduler.run_count == 0
+        finally:
+            await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_devices_are_reported_through_the_provider(self):
+        """Test the public device check follows the current configuration."""
+        devices = []
+        scheduler = BackupScheduler(
+            RecordingBackup(), 3600, ip_addresses_provider=lambda: list(devices)
+        )
+
+        assert scheduler.has_devices() is False
+
+        devices.append("192.168.1.10")
+
+        assert scheduler.has_devices() is True
+
+    @pytest.mark.asyncio
+    async def test_provider_errors_are_left_to_the_run(self):
+        """Test a broken provider still reaches the run that reports failures."""
+
+        def broken_provider():
+            raise ValueError("unreadable settings")
+
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(
+            backup,
+            3600,
+            next_run_at=datetime.now(UTC),
+            ip_addresses_provider=broken_provider,
+        )
+
+        await scheduler.start()
+        try:
+            for _ in range(60):
+                if scheduler.run_count:
+                    break
+                await asyncio.sleep(0.05)
+
+            assert scheduler.run_count == 1
+            assert "unreadable settings" in scheduler.last_error
+        finally:
+            await scheduler.stop()

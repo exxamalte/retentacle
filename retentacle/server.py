@@ -593,11 +593,14 @@ def _register_backup_routes(
     ):
         """Back up all registered devices in the background."""
         require_admin(request)
-        scheduler.queue()
-        background_tasks.add_task(
-            scheduler.run_once, _manual_backup_ip_addresses(store)
-        )
         target = _safe_redirect_path(redirect)
+        devices = _manual_backup_ip_addresses(store)
+        if not devices and not scheduler.has_devices():
+            # Starting a run that backs up nothing would report a finished
+            # backup that never happened.
+            return RedirectResponse(url=f"{target}?backup_empty=1", status_code=303)
+        scheduler.queue()
+        background_tasks.add_task(scheduler.run_once, devices)
         return RedirectResponse(url=f"{target}?backup_started=1", status_code=303)
 
     @app.get("/api/status")
