@@ -1,6 +1,9 @@
+# Build context is the repository root; see docker/Dockerfile.
 services:
   retentacle:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: retentacle:latest
     container_name: retentacle
     ports:

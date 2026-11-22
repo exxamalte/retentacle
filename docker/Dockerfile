@@ -4,7 +4,8 @@
 # settings, users) lives in the data folder (RETENTACLE_DATA_DIR, default
 # /data), which should be backed by a volume.
 #
-#   docker build -t retentacle .
+# Build from the repository root (the build context must contain the package):
+#   docker build -t retentacle -f docker/Dockerfile .
 #   docker run -d -p 8080:8080 -v retentacle-data:/data retentacle
 #
 # Startup options come from the environment (see the ENV defaults below) and
@@ -38,7 +39,7 @@ ENV RETENTACLE_HOST=0.0.0.0 \
 RUN mkdir -p "$RETENTACLE_DATA_DIR" \
     && chown -R retentacle:retentacle "$RETENTACLE_DATA_DIR" /app
 
-COPY docker-entrypoint.sh /entrypoint.sh
+COPY docker/docker-entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 
 USER retentacle

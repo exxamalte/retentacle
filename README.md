@@ -306,19 +306,20 @@ identifiers — they never touch `latest`. Pre-release tags (any suffix such
 as `-alpha`, `-beta`, `-rc`, `-dev`, `.dev1` or `b1`) publish only their tag
 name and `sha-<commit>`, never `latest`.
 
-The repository also includes a `Dockerfile` and a `docker-compose.yml` for
-building and running Retentacle from source.
+The Docker files live in the `docker/` folder: a `Dockerfile`, an entrypoint
+script, a `docker-compose.yml` and the ignore rules for the build context.
 
 Build and start the container with Docker Compose:
 
 ```commandline
-docker compose up -d --build
+docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-Or with plain Docker:
+Or with plain Docker — the build context must be the repository root, while
+the Dockerfile lives in `docker/`:
 
 ```commandline
-docker build -t retentacle .
+docker build -t retentacle -f docker/Dockerfile .
 docker run -d --name retentacle -p 8080:8080 -v retentacle-data:/data retentacle
 ```
 
