@@ -12,6 +12,14 @@
         {% endif %}
       </p>
     </div>
+    {% if request.state.user.role == 'admin' %}
+      <div class="header-actions">
+        <a class="button" href="/settings#devices">Add devices</a>
+        <form method="post" action="/backup?redirect=/">
+          <button class="button primary" type="submit">Run backup now</button>
+        </form>
+      </div>
+    {% endif %}
   </div>
 
   {% if request.query_params.get('backup_started') %}
@@ -155,16 +163,21 @@
       <p>
         {% if request.state.user.role == 'admin' %}
           The first backup will run automatically according to the configured
-          interval. You can also start one right now.
+          interval. Add devices to get started, or back up the currently
+          configured devices right now.
         {% else %}
           The first backup will run automatically according to the configured
-          interval. Ask an administrator to add devices and run the first backup.
+          interval. Ask an administrator to add devices and run the first
+          backup.
         {% endif %}
       </p>
       {% if request.state.user.role == 'admin' %}
-        <form method="post" action="/backup">
-          <button class="button primary" type="submit">Run backup now</button>
-        </form>
+        <div class="row-actions" style="justify-content: center;">
+          <a class="button primary" href="/settings#devices">Add devices</a>
+          <form method="post" action="/backup?redirect=/">
+            <button class="button" type="submit">Run backup now</button>
+          </form>
+        </div>
       {% endif %}
     </section>
   {% endif %}

@@ -513,7 +513,8 @@ class TestServer:
         assert 'action="/devices/192.168.1.10/backup"' in response.text
         assert "Back up this device" in response.text
         assert "data-backup-progress" in response.text
-        assert 'action="/backup?redirect=/devices/192.168.1.10"' in response.text
+        # the global "Run backup now" button moved to the dashboard header
+        assert 'action="/backup?redirect=/devices' not in response.text
 
     def test_device_page_links_to_web_ui(self):
         """Test the device page opens its web UI in a new tab."""
@@ -2006,10 +2007,23 @@ class TestAuthentication:
                 assert "Run backup now" in text
                 assert 'class="avatar-menu-item" href="/settings"' in text
                 assert ">Settings</a>" not in text
+                # the run button now lives on the dashboard, not the top bar
+                assert text.count("Run backup now") == 1
+                assert 'href="/settings#devices"' in text
+                assert "Add devices" in text
                 redirect = client.get("/users", follow_redirects=False)
 
                 assert redirect.status_code == 303
                 assert redirect.headers["location"] == "/settings"
+
+    def test_settings_devices_section_has_anchor(self):
+        """Test the settings page can be deep-linked at the devices card."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                text = client.get("/settings").text
+
+        assert 'id="devices"' in text
 
 
 class TestUserManagement:
