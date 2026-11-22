@@ -15,18 +15,33 @@
     <div class="alert" role="alert">
       <strong>Backup failed</strong> for {{ display_name }}. Check the server log for details.
     </div>
+  {% elif request.query_params.get('automatic') == 'on' %}
+    <div class="notice" role="status">
+      {{ display_name }} is now included in automatic backups.
+    </div>
+  {% elif request.query_params.get('automatic') == 'off' %}
+    <div class="notice" role="status">
+      {{ display_name }} no longer receives automatic backups. Manual backups
+      stay available.
+    </div>
   {% endif %}
 
-  <div class="page-header">
-    <div>
+  <div class="page-header device-header">
+    <div class="page-title">
       <h1>{{ display_name }}</h1>
       <p class="subtitle">
         <span class="mono">{{ ip_address }}</span>
-        &middot; {{ backups|length }} backup{% if backups|length != 1 %}s{% endif %}
+        <span>{{ backups|length }} backup{% if backups|length != 1 %}s{% endif %}</span>
+        <span class="badge{% if automatic %} success{% endif %}" title="{% if automatic %}Included in automatic backups{% else %}Not included in automatic backups{% endif %}">{{ 'Automatic' if automatic else 'Manual' }}</span>
+        <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
       </p>
     </div>
     <div class="header-actions">
-      <span class="badge">Generation {{ backups[0].get('generation', '?') }}</span>
+      {% if request.state.user.role == 'admin' %}
+        <form method="post" action="/devices/{{ ip_address }}/backup">
+          <button class="button primary" type="submit" title="Back up {{ display_name }} now">Back up this device</button>
+        </form>
+      {% endif %}
       <a
         class="button"
         href="/backups/{{ backups[0].doc_id }}#manual-restore"
@@ -34,17 +49,34 @@
       >Restore latest</a>
       {% if web_url %}
         <a
-          class="button"
+          class="button icon-button"
           href="{{ web_url }}"
           target="_blank"
           rel="noopener noreferrer"
           title="Open the device web UI in a new tab"
-        >Open web UI</a>
+          aria-label="Open the device web UI in a new tab"
+        ><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
       {% endif %}
       {% if request.state.user.role == 'admin' %}
-        <form method="post" action="/devices/{{ ip_address }}/backup">
-          <button class="button primary" type="submit">Back up this device</button>
-        </form>
+        {% if automatic %}
+          <form method="post" action="/devices/{{ ip_address }}/automatic/disable">
+            <button
+              class="button"
+              type="submit"
+              id="automatic-disable"
+              title="Remove this device from automatic backups"
+            >Remove from automatic</button>
+          </form>
+        {% else %}
+          <form method="post" action="/devices/{{ ip_address }}/automatic/enable">
+            <button
+              class="button"
+              type="submit"
+              id="automatic-enable"
+              title="Include this device in automatic backups"
+            >Add to automatic</button>
+          </form>
+        {% endif %}
       {% endif %}
     </div>
   </div>

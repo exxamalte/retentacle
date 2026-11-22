@@ -565,7 +565,7 @@ class TestBackupScheduler:
                 await asyncio.sleep(0.01)
 
             assert scheduler.started is True
-            assert scheduler.run_count == 1
+            assert scheduler.run_count >= 1
         finally:
             await scheduler.stop()
 

@@ -335,6 +335,32 @@
       margin-bottom: 1.35rem;
     }
 
+    .device-header {
+      align-items: center;
+      flex-wrap: nowrap;
+      gap: 1.25rem;
+    }
+
+    .device-header .page-title {
+      min-width: 0;
+    }
+
+    .device-header h1 {
+      overflow-wrap: anywhere;
+    }
+
+    .device-header .subtitle {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+    }
+
+    .device-header .header-actions {
+      flex-wrap: nowrap;
+      flex-shrink: 0;
+    }
+
     h1 {
       margin: 0 0 0.2rem;
       font-size: clamp(1.55rem, 3vw, 2rem);
@@ -945,6 +971,11 @@
     @media (max-width: 640px) {
       main {
         padding: 1.25rem 0.9rem 2.5rem;
+      }
+
+      .device-header {
+        align-items: flex-start;
+        flex-wrap: wrap;
       }
 
       .header-inner {

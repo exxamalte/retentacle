@@ -887,6 +887,62 @@ def _parse_form_field(form: dict[str, list[str]], name: str) -> str:
     return values[-1] if values else ""
 
 
+def _automatic_toggle_ip_addresses(
+    store: BackupStore,
+    configuration: Configuration,
+    ip_address: str,
+    *,
+    enable: bool,
+) -> list[str]:
+    """Return the settings device list with one device added or removed.
+
+    When no explicit list has been saved yet, the devices configured in the
+    file are materialized first, so toggling has a real effect without
+    silently dropping the other devices from automatic backups.
+    """
+    ip_addresses = _saved_ip_addresses(store)
+    if not ip_addresses:
+        ip_addresses = list(configuration.ip_addresses() or [])
+    canonical = _normalized_ip_address(ip_address)
+    if enable:
+        if canonical not in ip_addresses:
+            ip_addresses.append(canonical)
+    else:
+        ip_addresses = [item for item in ip_addresses if item != canonical]
+    return ip_addresses
+
+
+def _register_device_automatic_routes(
+    app: FastAPI, configuration: Configuration, store: BackupStore
+) -> None:
+    """Register routes toggling a device's automatic-backup membership."""
+
+    def _toggle(request: Request, ip_address: str, *, enable: bool):
+        require_admin(request)
+        records = store.by_device(ip_address)
+        if not records:
+            raise HTTPException(status_code=404, detail="Device not found")
+        settings = store.get_settings()
+        settings["ip_addresses"] = _automatic_toggle_ip_addresses(
+            store, configuration, ip_address, enable=enable
+        )
+        store.save_settings(settings)
+        stored_ip_address = str(records[0].get("ip_address", ip_address))
+        target = "/devices/" + quote(stored_ip_address, safe="")
+        flag = "on" if enable else "off"
+        return RedirectResponse(url=f"{target}?automatic={flag}", status_code=303)
+
+    @app.post("/devices/{ip_address}/automatic/enable")
+    async def enable_automatic_backups(request: Request, ip_address: str):
+        """Include a device in automatic backups."""
+        return _toggle(request, ip_address, enable=True)
+
+    @app.post("/devices/{ip_address}/automatic/disable")
+    async def disable_automatic_backups(request: Request, ip_address: str):
+        """Exclude a device from automatic backups."""
+        return _toggle(request, ip_address, enable=False)
+
+
 def _register_user_settings_routes(
     app: FastAPI,
     configuration: Configuration,
@@ -1227,6 +1283,10 @@ def _register_routes(
         if not backups:
             raise HTTPException(status_code=404, detail="Device not found")
         latest = backups[0]
+        automatic = _normalized_ip_address(ip_address) in {
+            _normalized_ip_address(value)
+            for value in (_effective_ip_addresses(configuration, store) or [])
+        }
         return templates.TemplateResponse(
             request=request,
             name="device.html",
@@ -1236,10 +1296,12 @@ def _register_routes(
                 "backups": backups,
                 "summaries": _backup_summaries(backups),
                 "web_url": _device_web_url(ip_address),
+                "automatic": automatic,
             },
         )
 
     _register_device_backup_route(app, store, scheduler)
+    _register_device_automatic_routes(app, configuration, store)
 
     @app.get("/backups/{doc_id}", response_class=HTMLResponse)
     async def backup(request: Request, doc_id: int):

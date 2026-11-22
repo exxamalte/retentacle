@@ -212,7 +212,7 @@ Requirements and options:
 ### Web UI
 
 * `/` - devices overview with scheduler status, backup counts, last automatic backup, total backup size on disk, the duration of the last automatic backup, next run time, and per-device indicators for automatic backups and recent backups.
-* `/devices/<ip-address>` - all backups for one device, newest first, with per-backup configuration chips, an "unchanged" marker for identical configs, plus links to the device web UI and to restoring the latest backup.
+* `/devices/<ip-address>` - all backups for one device, newest first, with per-backup configuration chips, an "unchanged" marker for identical configs, plus links to the device web UI and to restoring the latest backup. Admins can also add or remove that single device from the automatic-backup list right from this page.
 * `/devices/<ip-address>/compare?a=<id>&b=<id>` - leaf-level diff of the restorable configurations of two backups (changed / added / removed, credentials masked, live state excluded); defaults to the newest pair.
 * `/backups/<id>` - metadata, a manual restore section, a configuration summary, the device state at backup time, and raw JSON for a single backup.
 * `/backups/<id>/download` - download a backup as JSON.
