@@ -28,7 +28,19 @@
 
   <div class="page-header device-header">
     <div class="page-title">
-      <h1>{{ display_name }}</h1>
+      <h1>
+        {{ display_name }}
+        {% if web_url %}
+          <a
+            class="button icon-button device-web-link"
+            href="{{ web_url }}"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open the device web UI in a new tab"
+            aria-label="Open the device web UI in a new tab"
+          ><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
+        {% endif %}
+      </h1>
       <p class="subtitle">
         <span class="mono">{{ ip_address }}</span>
         <span>{{ backups|length }} backup{% if backups|length != 1 %}s{% endif %}</span>
@@ -47,16 +59,6 @@
         href="/backups/{{ backups[0].doc_id }}#manual-restore"
         title="Open the restore section of the newest backup"
       >Restore latest</a>
-      {% if web_url %}
-        <a
-          class="button icon-button"
-          href="{{ web_url }}"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Open the device web UI in a new tab"
-          aria-label="Open the device web UI in a new tab"
-        ><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a>
-      {% endif %}
       {% if request.state.user.role == 'admin' %}
         {% if automatic %}
           <form method="post" action="/devices/{{ ip_address }}/automatic/disable">
