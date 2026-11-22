@@ -274,6 +274,11 @@ or within the last 24 hours when automatic backups are disabled. The
 **Last automatic backup** card follows scheduled runs only — manually started
 backups, including single-device ones, do not move it.
 
+While no device is configured, scheduled runs are skipped with a line in the
+log instead of recording an empty automatic backup, and **Run backup now**
+points out that there is nothing to back up rather than reporting a finished
+run.
+
 Transient messages — a started or finished backup, saved settings, a failed form — appear as auto-dismissing toast notifications in the lower-right corner, overlaying the page instead of shifting tables and buttons down. They stack, close on click, and announce themselves politely to screen readers.
 
 Shelly devices usually serve their own configuration page over HTTP, so each
@@ -366,7 +371,7 @@ all interfaces, and reports health via the public `/health` endpoint.
   | `RETENTACLE_HOST` | `0.0.0.0` | Bind address inside the container |
   | `RETENTACLE_PORT` | `8080` | HTTP port inside the container (the health check follows it; adjust the port mapping, e.g. `-e RETENTACLE_PORT=9000 -p 9000:9000`) |
   | `RETENTACLE_DATA_DIR` | `/data` | Where the databases are stored. The image pre-creates this default with the right ownership, so an empty named volume mounted at `/data` "just works" (the Docker `VOLUME` instruction cannot follow the variable, so the mount hint stays `/data`) |
-  | `PUID` / `PGID` | `10001` | User/group the server runs as. The container starts as root, **takes ownership of the data folder once at startup**, then drops to these IDs — so fresh root-owned host bind mounts (the default when Docker creates them) work without any manual `chown` on the host. Set them to your host folder's owner, e.g. `PUID=1000 PGID=1000`, to keep files directly readable/editable as your user |
+  | `PUID` / `PGID` | `10001` | User/group the server runs as. The container starts as root, **takes ownership of the data folder once at startup**, then drops to these IDs — so fresh root-owned host bind mounts (the default when Docker creates them) work without any manual `chown` on the host. Set them to your host folder's owner, e.g. `PUID=1000 PGID=1000`, to keep files directly readable/editable as your user. Note that these variables only work while the container starts as root: a `user:` setting (or the **User** field in Portainer) overrides them and disables the ownership repair, see below |
   | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Reverse-proxy support, see below |
   | `RETENTACLE_UPDATE_CHECK` / `RETENTACLE_UPDATE_REPO` / `RETENTACLE_UPDATE_TOKEN` | — | Update check, see below |
 
@@ -422,7 +427,7 @@ they found:
 
 ```text
 entrypoint: data folder /data 0:0 -> 10001:10001, running as 10001:10001
-ERROR:retentacle.cli:Unable to run Retentacle: Data folder /data cannot be used ([Errno 13] Permission denied: '/data/.write-test'). Found: /data is owned by 0:0 mode 0755; the server runs as 10001:10001; /data is a bind mount (ro,relatime). Remedy: mount the folder read-write … In a container, an image older than the PUID/PGID entrypoint never adjusts a root-owned mount; the current build is ghcr.io/exxamalte/retentacle:main.
+ERROR:retentacle.cli:Unable to run Retentacle: Data folder /data cannot be used ([Errno 13] Permission denied: '/data/.write-test'). Found: /data is owned by 0:0 mode 0755; the server runs as 10001:10001; /data is a ext4 mount (rw,relatime). Remedy: start the container as root (remove any user: setting) so the entrypoint can take ownership of the folder, or chown the host folder to PUID/PGID (10001:10001).
 ```
 
 The `Found:` line is the part to look at: it reports who owns the folder, who
@@ -431,25 +436,37 @@ is enforcing — which of the causes below applies falls out of it.
 
 Work through the causes in this order:
 
-1. **Check that the running image is current.** A tag is only a name, and a
+1. **Check that the container is allowed to start as root.** The ownership
+   repair only runs when the entrypoint is root. A `user:` entry in the stack,
+   or the **User** field in Portainer's container form, overrides the image and
+   the `PUID`/`PGID` variables — the entrypoint then logs
+   `running as 10001:10001 without root, leaving /data (owned by 0:0) as is`
+   and the server refuses to start. Remove that setting (the server drops
+   privileges itself), or make the host folder match the forced user once with
+   `chown -R <uid>:<gid> /host/path`. Check with
+   `docker inspect <name> --format 'user={{.Config.User}}'`: it must be empty,
+   because the image ships no `USER` instruction.
+
+2. **Check that the running image is current.** A tag is only a name, and a
    container manager may keep using a cached build:
    `docker image inspect <image> --format 'user={{.Config.User}} entrypoint={{.Config.Entrypoint}} created={{.Created}}'`.
    An image with `user=retentacle` predates the PUID/PGID entrypoint and can
    never repair a root-owned bind mount; `user=` (empty) plus
    `entrypoint=['/entrypoint.sh']` is what a current image reports. Re-pull
    (Portainer: *Re-pull image*) or rebuild before recreating the container.
-2. **Let the entrypoint fix the folder.** It needs to start as root, so remove
-   any `user:` setting from the container or stack, and set `PUID`/`PGID` to
-   the owner of the host folder if the files should stay editable there.
-3. **SELinux (Fedora, RHEL, openSUSE, …).** Run `getenforce` on the host. With
+3. **Pick the right owner for the files.** With the entrypoint running as root,
+   it takes ownership of the folder at every start; set `PUID`/`PGID` to the
+   owner of the host folder (e.g. `PUID=1000 PGID=1000`) when the files should
+   stay directly readable and editable there.
+4. **SELinux (Fedora, RHEL, openSUSE, …).** Run `getenforce` on the host. With
    `Enforcing`, ownership is correct but the security label still denies
    writes — add `:z` to the bind mount (`/host/path:/data:z`), relabel it with
    `chcon -Rt container_file_t /host/path`, or use a named volume.
-4. **Read-only or remote mounts.** NFS exports with `root_squash` reject the
+5. **Read-only or remote mounts.** NFS exports with `root_squash` reject the
    startup `chown` (the entrypoint logs a warning) and read-only mounts reject
    writes entirely. Match `PUID`/`PGID` to the folder owner, fix the export
    mapping, or use a named volume.
-5. **No host terminal needed at all:** a named volume. Create one in Portainer
+6. **No host terminal needed at all:** a named volume. Create one in Portainer
    under *Volumes*, mount it at `/data`, and nothing has to be chowned — the
    image pre-creates `/data` with the right ownership and an empty volume
    inherits it.

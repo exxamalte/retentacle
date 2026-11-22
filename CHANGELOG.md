@@ -15,6 +15,9 @@
 * Fix host bind-mount permissions out of the box: the container now takes ownership of the data folder at startup and drops to the unprivileged PUID/PGID user.
 * Refuse to start when the data folder or a stored database cannot be written, logging who owns the folder, which user the server runs as, the mount options and the SELinux mode, plus the matching remedy — and exit non-zero so supervisors report the failure instead of a container that silently keeps no state.
 * Log what the container entrypoint did with the data folder and which user the server runs as.
+* Documented that a `user:` setting (or Portainer's **User** field) overrides the image and disables the data-folder ownership repair.
+* Skip scheduled backups while no device is configured: the log explains that nothing is set up instead of warning about an unusable run, and an empty run no longer counts as the last automatic backup.
+* The **Run backup now** button reports that no devices are configured instead of starting a run that backs up nothing, and one-shot runs (`--once`) warn when the device list is empty.
 * Keep the configured backup time across restarts: when the pending slot is unknown, the schedule is recovered from the last automatic backup instead of re-anchoring to the restart time, and slots missed while the server was down are caught up in a single run.
 * Move the "Run backup now" button from the top bar to the dashboard header and add an "Add devices" shortcut to the settings device section.
 * Arrange the overview stat cards in a fixed three-column grid on wide screens.

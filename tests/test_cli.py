@@ -176,3 +176,39 @@ class TestCLI:
         runpy.run_module("retentacle", run_name="__main__")
 
         mock_main.assert_called_once_with()
+
+
+class TestOneShotWithoutDevices:
+    """Tests for the cron-style single backup run."""
+
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
+    def test_warns_when_nothing_is_configured(
+        self, mock_configuration, mock_backup, mock_run_server, caplog
+    ):
+        """Test an empty configuration is reported as a problem to fix."""
+        mock_configuration.return_value.ip_addresses.return_value = []
+        mock_backup.return_value.execute.return_value = []
+
+        with caplog.at_level("WARNING", logger="retentacle.cli"):
+            cli.main(["--once"])
+
+        assert "No devices configured" in caplog.text
+        assert "--discover" in caplog.text
+        mock_run_server.assert_not_called()
+
+    @patch("retentacle.cli.run_server")
+    @patch("retentacle.cli.Backup")
+    @patch("retentacle.cli.Configuration")
+    def test_devices_are_not_blamed_for_a_failed_run(
+        self, mock_configuration, mock_backup, mock_run_server, caplog
+    ):
+        """Test configured devices do not trigger the missing-devices warning."""
+        mock_configuration.return_value.ip_addresses.return_value = ["192.168.1.10"]
+        mock_backup.return_value.execute.return_value = []
+
+        with caplog.at_level("WARNING", logger="retentacle.cli"):
+            cli.main(["--once"])
+
+        assert "No devices configured" not in caplog.text

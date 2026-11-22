@@ -78,7 +78,14 @@ def main(argv: list[str] | None = None) -> None:
         )
         if args.once:
             # Execute a single backup (scheduled/cron style run).
-            Backup(configuration).execute(automatic=True)
+            backed_up = Backup(configuration).execute(automatic=True)
+            if not backed_up and not configuration.ip_addresses():
+                # Nothing to do is a configuration problem for a scripted run.
+                logger.warning(
+                    "No devices configured: nothing was backed up. List them"
+                    " under ip_addresses in the configuration file or run with"
+                    " --discover.",
+                )
         else:
             # Run the web server and scheduled backups
             run_server(configuration)

@@ -27,6 +27,10 @@ services:
       # the files directly editable on the host (e.g. PUID/PGID: 1000).
       # PUID: "10001"
       # PGID: "10001"
+      # Do not add a `user:` setting here: it overrides the image (which ships
+      # no USER instruction), the entrypoint then cannot adjust the data
+      # folder and the server refuses to start. Privilege dropping is handled
+      # by PUID/PGID.
       # Behind a reverse proxy (Traefik, nginx, Caddy, …): trust the
       # X-Forwarded-* headers from the proxy so HTTPS, the host name and
       # secure session cookies work correctly. Use the proxy's IP, its
