@@ -5,6 +5,7 @@
 * Offer a ready-to-run manual restore command and a dedicated `restore.json` download per backup.
 * Summarize each backup on the device history page with configuration chips, mark unchanged configs, and add a "Restore latest" shortcut.
 * Add a configuration diff view comparing any two backups of a device, with changed, added and removed settings.
+* Show the history Diff button only where a newer backup exists to compare against.
 * Rename the application to Retentacle.
 * Show the tagline "Tentacles for your Shelly backups." under the name in the header.
 * Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
@@ -14,6 +15,7 @@
 * Run missed scheduled backups immediately after startup instead of showing a next run in the past.
 * Keep automatic backups on the fixed wall-clock schedule chosen in the settings, even after restarts, late catch-up runs, or manual backups.
 * Track the trigger of each backup and base the overview's last automatic backup card on scheduled runs only.
+* Add a GitHub link next to the version number in the account menu.
 * Replace the header email badge and sign-out button with an avatar account menu showing the role, settings link, and app version, using the OIDC profile picture from userinfo or the ID token when available.
 * Remove the Settings button from the header; it lives in the account menu now.
 * Serve the app logo from a static folder inside the package and show it in the header and as favicon.

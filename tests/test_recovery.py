@@ -99,6 +99,31 @@ class TestGen2Classification:
 
         assert "sys.ui_data" not in paths
 
+    def test_boolean_flags_are_not_masked(self):
+        """Test that non-string values under sensitive names stay visible."""
+        record = {
+            "doc_id": 1,
+            "ip_address": "10.0.0.1",
+            "settings": {
+                "configuration": {
+                    "mqtt": {
+                        "use_client_cert": False,
+                        "client_cert": "-----BEGIN CERTIFICATE-----",
+                        "password": "hunter2",
+                    }
+                }
+            },
+        }
+        values = {
+            item.path: (item.value, item.masked)
+            for group in recovery_for(record).groups
+            for item in group.items
+        }
+
+        assert values["mqtt.use_client_cert"] == ("false", False)
+        assert values["mqtt.client_cert"] == ("••••••••", True)
+        assert values["mqtt.password"] == ("••••••••", True)
+
     def test_restore_command_and_filename(self):
         """Test the SetConfig command targets the device and payload file."""
         recovery = recovery_for(_GEN2_RECORD)
@@ -314,6 +339,15 @@ class TestCompareConfigs:
         )
 
         assert diff["identical"] is True
+
+    def test_boolean_toggle_changes_are_visible(self):
+        """Test that flipped flags show their real values in diffs."""
+        diff = compare_configs(
+            {"mqtt": {"use_client_cert": False}},
+            {"mqtt": {"use_client_cert": True}},
+        )
+
+        assert [(c.old, c.new) for c in diff["changed"]] == [("false", "true")]
 
     def test_unset_values_render_placeholder(self):
         """Test removed empty leaves render as a dash."""

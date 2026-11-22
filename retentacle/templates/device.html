@@ -90,12 +90,6 @@
                       href="/devices/{{ ip_address }}/compare?a={{ backup.doc_id }}&amp;b={{ newer.doc_id }}"
                       title="Show configuration changes since this backup"
                     >Diff</a>
-                  {% elif backups|length > 1 %}
-                    <a
-                      class="button small"
-                      href="/devices/{{ ip_address }}/compare"
-                      title="Compare the two newest backups"
-                    >Diff</a>
                   {% endif %}
                 </div>
               </td>
