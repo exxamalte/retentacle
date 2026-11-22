@@ -1,13 +1,15 @@
 # Retentacle — backup server for Shelly devices.
 #
 # Builds the Python package into a slim image. All state (backup database,
-# settings, users) lives in /data, which should be backed by a volume.
+# settings, users) lives in the data folder (RETENTACLE_DATA_DIR, default
+# /data), which should be backed by a volume.
 #
 #   docker build -t retentacle .
 #   docker run -d -p 8080:8080 -v retentacle-data:/data retentacle
 #
-# Additional command line flags can be passed by overriding the CMD, e.g.:
-#   docker run ... retentacle --discover
+# Startup options come from the environment (see the ENV defaults below) and
+# additional command line flags can be appended, e.g.:
+#   docker run -d -e RETENTACLE_PORT=9000 -p 9000:9000 ... retentacle --discover
 FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -21,19 +23,31 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE MANIFEST.in ./
 COPY retentacle ./retentacle
 
-RUN useradd --create-home --uid 10001 retentacle \
-    && pip install . \
-    && mkdir -p /data \
-    && chown -R retentacle:retentacle /data /app
+RUN useradd --create-home --uid 10001 retentacle && pip install .
+
+# Bind address, port and data folder of the server; override with -e.
+ENV RETENTACLE_HOST=0.0.0.0 \
+    RETENTACLE_PORT=8080 \
+    RETENTACLE_DATA_DIR=/data
+
+# Pre-create the data folder from the default in RETENTACLE_DATA_DIR, so an
+# empty named volume mounted there inherits ownership for the service user.
+# Note: the VOLUME instruction below cannot use environment variables — it
+# always refers to the default path; a custom RETENTACLE_DATA_DIR must be
+# mounted or otherwise writable by UID 10001 at runtime.
+RUN mkdir -p "$RETENTACLE_DATA_DIR" \
+    && chown -R retentacle:retentacle "$RETENTACLE_DATA_DIR" /app
+
+COPY docker-entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
 
 USER retentacle
 
 VOLUME /data
 EXPOSE 8080
 
-# Uses the public /health endpoint; assumes the default port 8080.
+# Uses the public /health endpoint on the configured port.
 HEALTHCHECK --interval=60s --timeout=5s --start-period=15s \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5).getcode() == 200 else 1)"
+    CMD python -c "import os,urllib.request,sys; port=os.environ.get('RETENTACLE_PORT','8080'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=5).getcode() == 200 else 1)"
 
-ENTRYPOINT ["retentacle"]
-CMD ["--host", "0.0.0.0", "--port", "8080", "--target-folder", "/data"]
+ENTRYPOINT ["/entrypoint.sh"]

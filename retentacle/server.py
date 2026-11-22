@@ -25,6 +25,7 @@ import uvicorn
 from .auth import (
     current_user,
     register_auth,
+    request_is_secure,
     require_admin,
     start_session,
     user_management_context,
@@ -977,7 +978,12 @@ def _register_user_detail_settings_routes(
             current = users.get_user(user_id)
             if current is not None:
                 token = start_session(users, current)
-                with_session_cookie(response, token, users.session_max_age)
+                with_session_cookie(
+                    response,
+                    token,
+                    users.session_max_age,
+                    secure=request_is_secure(request),
+                )
         return response
 
     @app.post("/settings/users/{user_id}/delete")

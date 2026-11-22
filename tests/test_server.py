@@ -3613,3 +3613,55 @@ class TestUpdateBadge:
         assert refreshed is not None
         assert refreshed.latest == "v9999.0.0"
         assert 'class="badge update-badge"' in text
+
+
+class TestProxyCookieSecurity:
+    """Tests for secure session cookies behind TLS and reverse proxies."""
+
+    def test_https_login_sets_secure_cookie(self):
+        """Test sessions over https get the Secure cookie flag."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app, base_url="https://testserver/") as client:
+                response = client.post(
+                    "/login",
+                    data={"email": _ADMIN_EMAIL, "password": _ADMIN_PASSWORD},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                cookie = response.headers["set-cookie"].lower()
+                assert "secure" in cookie
+                assert "httponly" in cookie
+
+    def test_plain_http_login_omits_secure_cookie(self):
+        """Test plain http sessions do not set the Secure flag (LAN access)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with TestClient(app) as client:
+                response = client.post(
+                    "/login",
+                    data={"email": _ADMIN_EMAIL, "password": _ADMIN_PASSWORD},
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert "secure" not in response.headers["set-cookie"].lower()
+
+    def test_setup_over_https_sets_secure_cookie(self):
+        """Test onboarding over https also marks the cookie secure."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_setup_app(tmpdir)
+            with TestClient(app, base_url="https://testserver/") as client:
+                response = client.post(
+                    "/setup",
+                    data={
+                        "email": "admin@example.com",
+                        "password": "unit-test-login-pass-1",
+                        "confirm_password": "unit-test-login-pass-1",
+                    },
+                    follow_redirects=False,
+                )
+
+                assert response.status_code == 303
+                assert "secure" in response.headers["set-cookie"].lower()

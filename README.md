@@ -298,12 +298,13 @@ docker run -d --name retentacle -p 8080:8080 -v retentacle-data:/data \
   ghcr.io/exxamalte/retentacle:latest
 ```
 
-Tags work as follows: proper releases (a `vX.Y.Z` git tag) publish the plain
-version (e.g. `2026.11.0`) and update `latest`. Development builds on the
-default branch publish the current application version from `pyproject.toml`
-(e.g. `2026.11.0-dev`), plus `main` and `sha-<commit>` identifiers — they
-never touch `latest`. Prereleases (version tags with a `b` suffix, e.g.
-`v2026.11.0b1`) publish only their tag name and `sha-<commit>`.
+Tags work as follows: proper releases (a plain numeric `vX.Y.Z` git tag)
+publish the version (e.g. `2026.11.0`) and update `latest`. Development
+builds on the default branch publish the current application version from
+`pyproject.toml` (e.g. `2026.11.0-dev`), plus `main` and `sha-<commit>`
+identifiers — they never touch `latest`. Pre-release tags (any suffix such
+as `-alpha`, `-beta`, `-rc`, `-dev`, `.dev1` or `b1`) publish only their tag
+name and `sha-<commit>`, never `latest`.
 
 The repository also includes a `Dockerfile` and a `docker-compose.yml` for
 building and running Retentacle from source.
@@ -330,20 +331,53 @@ all interfaces, and reports health via the public `/health` endpoint.
   `/data` inside the container. Keep it on a named volume, as in the compose
   example, or bind-mount a folder; with a bind mount make sure the folder is
   writable by UID 10001, the user the container runs as.
-* **Options** — command line flags work as usual by replacing the container
-  command, for example `docker run ... retentacle --port 9000`. Update the
-  port mapping accordingly; the built-in health check assumes the default
-  port 8080.
+* **Configuration via environment** — startup options are configured with
+  environment variables instead of hand-written commands:
+
+  | Variable | Default | Purpose |
+  | --- | --- | --- |
+  | `RETENTACLE_HOST` | `0.0.0.0` | Bind address inside the container |
+  | `RETENTACLE_PORT` | `8080` | HTTP port inside the container (the health check follows it; adjust the port mapping, e.g. `-e RETENTACLE_PORT=9000 -p 9000:9000`) |
+  | `RETENTACLE_DATA_DIR` | `/data` | Where the databases are stored. The image pre-creates this default with the right ownership, so an empty named volume mounted at `/data` "just works"; any other path must be mounted and writable by UID 10001 (the Docker `VOLUME` instruction cannot follow the variable, so the mount hint stays `/data`) |
+  | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Reverse-proxy support, see below |
+  | `RETENTACLE_UPDATE_CHECK` / `RETENTACLE_UPDATE_REPO` / `RETENTACLE_UPDATE_TOKEN` | — | Update check, see below |
+
+  Any extra CLI flags still work and are appended after the generated ones,
+  e.g. `docker run ... retentacle --discover` or
+  `docker run ... -v retentacle-data:/data retentacle --configuration /data/configuration.yaml`.
+* **Reverse proxy (Traefik, nginx, Caddy)** — terminate TLS at the proxy and
+  let Retentacle serve plain HTTP. Set `FORWARDED_ALLOW_IPS` so the server
+  trusts the proxy's `X-Forwarded-*` headers: the proxy's container IP, its
+  Docker network CIDR, or `*` for the simplest setups. With that, the app
+  sees the original `https` scheme and host name — session cookies are
+  automatically sent with the `Secure` flag over HTTPS while plain LAN http
+  access keeps working without it. Two proxy caveats worth knowing:
+  * OIDC: set the **Callback URL** on the Settings page to your public
+    `https://<host>/oidc/callback`, so the OAuth redirect never depends on
+    header forwarding.
+  * Path prefixes (serving the app under `https://host/retentacle/`) are not
+    supported — use a dedicated hostname/subdomain or port.
+
+  Minimal Traefik (label discovery) compose example:
+
+  ```yaml
+  services:
+    retentacle:
+      image: ghcr.io/exxamalte/retentacle:latest
+      volumes:
+        - retentacle-data:/data
+      environment:
+        FORWARDED_ALLOW_IPS: "*"
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.retentacle.rule=Host(`backup.example.com`)
+        - traefik.http.routers.retentacle.entrypoints=websecure
+        - traefik.http.routers.retentacle.tls=true
+  ```
 * **Device discovery** — mDNS discovery needs direct access to the local
   network. Run the container with `network_mode: host` (see the commented
   lines in the compose file) and add `--discover`, or configure device IP
   addresses in the web UI instead, which works with plain port mappings.
-* **Configuration file** — to use a `configuration.yaml`, place it in the
-  data folder and override the command:
-
-  ```commandline
-  docker run ... -v retentacle-data:/data retentacle --configuration /data/configuration.yaml
-  ```
 
 * **One-shot backups** — the same image works for cron-style single runs:
 
