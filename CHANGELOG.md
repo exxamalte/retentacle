@@ -8,6 +8,7 @@
 * Show the history Diff button only where a newer backup exists to compare against.
 * Rename the application to Retentacle.
 * Show the tagline "Tentacles for your Shelly backups." under the name in the header.
+* Show the total size of all backups on disk and the duration of the last automatic backup as dashboard cards on the overview.
 * Add a trademark disclaimer to the bottom of every page and remove the database path from the overview.
 * Remove the `--ip-address` and `--interval` command line options; configure devices and the backup schedule in the web UI or the configuration file.
 * Store web settings in a separate `retentacle_settings.json` database, so they can be reset without touching backups.

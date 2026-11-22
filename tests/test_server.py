@@ -16,7 +16,9 @@ from retentacle.discovery import DiscoveredDevice
 from retentacle.oidc import OIDCError
 from retentacle.server import (
     _effective_ip_addresses,
+    _format_bytes,
     _format_datetime_local,
+    _format_duration,
     _format_interval,
     _format_interval_value,
     _format_timestamp,
@@ -24,7 +26,9 @@ from retentacle.server import (
     _parse_datetime_local,
     _parse_ip_addresses,
     _recent_backup_cutoff,
+    _save_last_automatic_run,
     _saved_ip_addresses,
+    _saved_last_automatic_duration,
     create_app,
     run_server,
 )
@@ -3435,3 +3439,83 @@ class TestConfigCompare:
             _login(client, "guest@example.com", "viewer-password-1")
 
             assert client.get("/devices/192.168.10.20/compare").status_code == 200
+
+
+class TestDashboardStats:
+    """Tests for the backup size and duration cards on the overview."""
+
+    def test_format_bytes(self):
+        """Test human-readable byte sizes."""
+        assert _format_bytes(0) == "0 B"
+        assert _format_bytes(512) == "512 B"
+        assert _format_bytes(2048) == "2.0 KB"
+        assert _format_bytes(3 * 1024**2) == "3.0 MB"
+        assert _format_bytes(5 * 1024**3) == "5.0 GB"
+
+    def test_format_duration(self):
+        """Test human-readable durations."""
+        assert _format_duration(None) == "Unknown"
+        assert _format_duration(-1) == "Unknown"
+        assert _format_duration(0.345) == "345 ms"
+        assert _format_duration(4.21) == "4.2 s"
+        assert _format_duration(3600) == "1 hour"
+
+    def test_save_and_read_last_automatic_run(self):
+        """Test the duration round-trip through the settings database."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Configuration(None, tmpdir, None).database_path())
+            completed = datetime(2026, 11, 21, 3, 0, 0, tzinfo=UTC)
+
+            assert _saved_last_automatic_duration(store) is None
+
+            _save_last_automatic_run(store, completed, timedelta(seconds=4.21))
+
+            assert _saved_last_automatic_duration(store) == 4.21
+            settings = store.get_settings()
+            assert settings["last_automatic_run_at"] == completed.isoformat()
+
+    def test_ignores_invalid_saved_duration(self):
+        """Test that a corrupted duration value reads as unknown."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = BackupStore(Configuration(None, tmpdir, None).database_path())
+            store.save_settings({"last_automatic_duration": "yesterday"})
+
+            assert _saved_last_automatic_duration(store) is None
+
+    def test_overview_shows_size_and_duration(self):
+        """Test the overview cards include size and persisted duration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir, records=[_record()])
+            store.save_settings(
+                {"last_automatic_duration": 4.21, "last_automatic_run_at": "x"}
+            )
+            with _client(app) as client:
+                text = client.get("/").text
+
+            expected_size = _format_bytes(store.backup_size())
+
+        assert "Backup size on disk" in text
+        assert expected_size in text
+        assert "Last backup duration" in text
+        assert "4.2 s" in text
+
+    def test_overview_duration_unknown_without_history(self):
+        """Test the duration card falls back to Unknown on a fresh install."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir, records=[_record()])
+            with _client(app) as client:
+                text = client.get("/").text
+
+        assert "Last backup duration" in text
+        assert ">Unknown<" in text.split("Last backup duration</p>")[1]
+
+    @pytest.mark.asyncio
+    async def test_scheduled_run_persists_duration(self):
+        """Test that the app-wired scheduler stores the run duration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+
+            await app.state.scheduler.run_once(automatic=True)
+
+            assert _saved_last_automatic_duration(store) is not None
+            assert "last_automatic_run_at" in store.get_settings()

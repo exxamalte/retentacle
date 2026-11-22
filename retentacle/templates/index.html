@@ -58,6 +58,14 @@
       <p class="stat-value">{{ last_backup|format_timestamp }}</p>
     </div>
     <div class="card">
+      <p class="stat-label">Backup size on disk</p>
+      <p class="stat-value">{{ backup_size }}</p>
+    </div>
+    <div class="card">
+      <p class="stat-label">Last backup duration</p>
+      <p class="stat-value">{{ last_duration }}</p>
+    </div>
+    <div class="card">
       <p class="stat-label">Next run</p>
       <p class="stat-value">{{ scheduler.next_run|format_timestamp }}</p>
     </div>
