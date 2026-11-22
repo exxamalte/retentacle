@@ -69,7 +69,9 @@ initial admin account, then sign in and add your device IP addresses on the
 configuration file. The first backup starts immediately after startup;
 subsequent backups run at the configured interval. If the computer was off or
 asleep at a scheduled time, the missed backup runs right away at the next
-startup. Your chosen slot is sticky: scheduled backups always happen on the
+startup. While the server runs, due slots are re-checked against the wall
+clock every minute, so a schedule missed during laptop sleep or a clock
+change is caught up promptly without a restart. Your chosen slot is sticky: scheduled backups always happen on the
 grid of the date and time selected on the Settings page — e.g. daily at 3am —
 no matter when a run actually started or finished, and restarts, catch-up
 runs, and manual backups never move later runs off that schedule.

@@ -17,6 +17,7 @@
 * Name the backups database file `retentacle_backups.json`.
 * Run missed scheduled backups immediately after startup instead of showing a next run in the past.
 * Keep automatic backups on the fixed wall-clock schedule chosen in the settings, even after restarts, late catch-up runs, or manual backups.
+* Detect due backup slots within a minute even after system sleep, instead of waiting for a stalled timer.
 * Track the trigger of each backup and base the overview's last automatic backup card on scheduled runs only.
 * Add a GitHub link next to the version number in the account menu.
 * Show an admin-only badge in the header when a newer stable release is available on GitHub; pre-releases are never announced.

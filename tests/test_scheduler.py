@@ -765,3 +765,59 @@ class TestRunFinishedCallback:
 
         assert scheduler.last_run is not None
         assert scheduler.run_count == 1
+
+
+class TestWallClockRechecks:
+    """Tests for noticing due slots after system sleep."""
+
+    @pytest.mark.asyncio
+    async def test_due_slot_detected_without_timer_firing(self):
+        """Test a wall-clock jump past the slot is noticed by re-polling."""
+        backup = Mock()
+        backup.execute.return_value = []
+        far = datetime.now(UTC) + timedelta(hours=2)
+        scheduler = BackupScheduler(backup, 3600, next_run_at=far)
+
+        with patch("retentacle.scheduler._WALL_CLOCK_POLL_SECONDS", 0.05):
+            await scheduler.start()
+            try:
+                await asyncio.sleep(0.1)
+                assert scheduler.run_count == 0
+
+                # Simulate waking from sleep: the pending timer is still
+                # behind, only the wall clock says the slot is due.
+                scheduler._next_run_at = datetime.now(UTC) - timedelta(seconds=1)  # noqa: SLF001
+                for _ in range(100):
+                    if scheduler.run_count:
+                        break
+                    await asyncio.sleep(0.05)
+
+                assert scheduler.run_count == 1
+            finally:
+                await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_long_wait_still_respects_schedule_changes(self):
+        """Test the periodic recheck does not interfere with rescheduling."""
+        backup = Mock()
+        backup.execute.return_value = []
+        scheduler = BackupScheduler(
+            backup, 60, next_run_at=datetime.now(UTC) + timedelta(hours=2)
+        )
+
+        with patch("retentacle.scheduler._WALL_CLOCK_POLL_SECONDS", 0.05):
+            await scheduler.start()
+            try:
+                await asyncio.sleep(0.15)
+                assert scheduler.run_count == 0
+                target = datetime.now(UTC) + timedelta(seconds=0.2)
+                await scheduler.set_schedule(
+                    interval=60, enabled=True, next_run_at=target
+                )
+                for _ in range(100):
+                    if scheduler.run_count:
+                        break
+                    await asyncio.sleep(0.05)
+                assert scheduler.run_count == 1
+            finally:
+                await scheduler.stop()
