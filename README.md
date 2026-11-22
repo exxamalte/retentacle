@@ -74,7 +74,11 @@ clock every minute, so a schedule missed during laptop sleep or a clock
 change is caught up promptly without a restart. Your chosen slot is sticky: scheduled backups always happen on the
 grid of the date and time selected on the Settings page — e.g. daily at 3am —
 no matter when a run actually started or finished, and restarts, catch-up
-runs, and manual backups never move later runs off that schedule.
+runs, and manual backups never move later runs off that schedule. Changing
+only the repeat interval keeps that clock time as well: going from hourly to
+daily stays on the grid's own hour instead of freezing the daily backup at
+whatever minute the Settings page was opened, and the confirmation message
+names the resulting date and time.
 
 ### Server options
 

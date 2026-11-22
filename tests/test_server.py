@@ -1533,7 +1533,10 @@ class TestServer:
                 )
 
                 assert response.status_code == 303
-                assert response.headers["location"] == "/settings?saved=1"
+                # The saved redirect reports the resolved slot for the toast.
+                assert response.headers["location"].startswith(
+                    "/settings?saved=1&next_run="
+                )
                 settings = store.get_settings()
                 assert settings["interval"] == 1800
                 assert settings["automatic_backups"] is True
@@ -4115,3 +4118,129 @@ class TestBackupRunWithoutDevices:
                 scheduler.run_once.assert_awaited_once_with(["192.168.1.10"])
 
         assert response.headers["location"] == "/?backup_started=1"
+
+
+class TestScheduleIntervalChange:
+    """Tests for changing the repeat interval on the settings page."""
+
+    def _hourly_app(self, tmpdir, usual_time):
+        """Build an app running hourly, with a grid anchored at usual_time."""
+        config = Configuration(None, tmpdir, None, interval=0)
+        store = BackupStore(config.database_path())
+        store.save_settings(
+            {
+                "interval": 3600,
+                "automatic_backups": True,
+                "next_run_at": usual_time.isoformat(),
+            }
+        )
+        users = UserStore(config.users_path(), pbkdf2_iterations=1)
+        users.create_user(_ADMIN_EMAIL, _ADMIN_PASSWORD, UserRole.ADMIN)
+        app = create_app(config, store=store, users=users)
+        scheduler = app.state.scheduler
+        # The server has been running hourly for a while, so the pending slot
+        # is the next hour - not the time the user originally chose.
+        pending = datetime.now(UTC) + timedelta(minutes=40)
+        scheduler._anchor_at = usual_time  # noqa: SLF001
+        scheduler._next_run_at = pending  # noqa: SLF001
+        return app, store, pending
+
+    def test_untouched_time_keeps_the_usual_backup_time(self):
+        """Test switching to daily lands on the daily slot, not the page time."""
+        usual = (datetime.now(UTC) - timedelta(days=1)).replace(
+            hour=23, minute=0, second=0, microsecond=0
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store, pending = self._hourly_app(tmpdir, usual)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings",
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "1d",
+                        "next_run": _format_datetime_local(pending),
+                    },
+                    follow_redirects=False,
+                )
+                next_run = app.state.scheduler.next_run
+                anchor = app.state.scheduler.anchor
+                saved = dict(store.get_settings())
+
+        assert response.status_code == 303
+        assert next_run is not None
+        # Not the prefilled hourly slot any more, but the same clock time.
+        assert next_run > pending
+        assert (next_run - usual).total_seconds() % 86400 == 0
+        assert (next_run.hour, next_run.minute) == (23, 0)
+        assert anchor == next_run
+        assert saved["interval"] == 86400
+        assert saved["next_run_at"] == next_run.isoformat()
+
+    def test_edited_time_is_used_as_given(self):
+        """Test an explicit new date and time wins over the projection."""
+        usual = (datetime.now(UTC) - timedelta(days=1)).replace(
+            hour=23, minute=0, second=0, microsecond=0
+        )
+        chosen = (datetime.now(UTC) + timedelta(days=2)).replace(
+            hour=4, minute=30, second=0, microsecond=0
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _store, _pending = self._hourly_app(tmpdir, usual)
+            with _client(app) as client:
+                client.post(
+                    "/settings",
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "1d",
+                        "next_run": _format_datetime_local(chosen),
+                    },
+                    follow_redirects=False,
+                )
+
+        assert app.state.scheduler.next_run == chosen
+
+    def test_redirect_reports_the_resolved_time(self):
+        """Test the confirmation toast can name the new next backup time."""
+        usual = (datetime.now(UTC) - timedelta(days=1)).replace(
+            hour=23, minute=0, second=0, microsecond=0
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _store, pending = self._hourly_app(tmpdir, usual)
+            with _client(app) as client:
+                response = client.post(
+                    "/settings",
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "1d",
+                        "next_run": _format_datetime_local(pending),
+                    },
+                    follow_redirects=False,
+                )
+                location = response.headers["location"]
+                page = client.get(location).text
+
+        assert location.startswith("/settings?saved=1&next_run=")
+        assert "Next automatic backup: " in page
+        assert "toLocaleString" in page
+        assert "retention is applied" not in page
+
+    def test_same_interval_never_moves_the_slot(self):
+        """Test re-saving without an interval change keeps the pending slot."""
+        usual = (datetime.now(UTC) - timedelta(days=1)).replace(
+            hour=23, minute=0, second=0, microsecond=0
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _store, pending = self._hourly_app(tmpdir, usual)
+            with _client(app) as client:
+                client.post(
+                    "/settings",
+                    data={
+                        "automatic_backups": "on",
+                        "interval_preset": "1h",
+                        "next_run": _format_datetime_local(pending),
+                    },
+                    follow_redirects=False,
+                )
+                next_run = app.state.scheduler.next_run
+
+        assert abs((next_run - pending).total_seconds()) < 60

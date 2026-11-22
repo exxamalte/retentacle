@@ -1096,6 +1096,39 @@ def _register_user_detail_settings_routes(
         return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
 
 
+def _planned_next_run(
+    scheduler: BackupScheduler,
+    interval: int,
+    raw_next_run: str,
+    next_run_at: datetime | None,
+) -> datetime | None:
+    """Return the first slot a saved schedule should run at.
+
+    The form prefills the pending slot, so a field still holding exactly that
+    value means only the repeat interval changed. Project the existing grid
+    onto the new interval instead of freezing, say, a daily backup at whatever
+    minute the settings page happened to be opened.
+    """
+    pending = scheduler.next_run
+    if (
+        next_run_at is None
+        or pending is None
+        or interval == scheduler.interval
+        or raw_next_run != _format_datetime_local(pending)
+    ):
+        return next_run_at
+    return scheduler.next_slot(interval) or next_run_at
+
+
+def _settings_saved_redirect(scheduler: BackupScheduler) -> RedirectResponse:
+    """Redirect to the settings page, reporting the resolved next backup time."""
+    target = "/settings?saved=1"
+    next_run = scheduler.next_run
+    if next_run is not None:
+        target += f"&next_run={quote(next_run.isoformat(), safe='')}"
+    return RedirectResponse(url=target, status_code=303)
+
+
 def _register_settings_routes(
     app: FastAPI,
     configuration: Configuration,
@@ -1165,6 +1198,7 @@ def _register_settings_routes(
                 next_run_value=raw_next_run,
                 error=error,
             )
+        next_run_at = _planned_next_run(scheduler, interval, raw_next_run, next_run_at)
         settings = store.get_settings()
         settings["interval"] = interval
         settings["automatic_backups"] = automatic_backups
@@ -1175,7 +1209,7 @@ def _register_settings_routes(
             enabled=automatic_backups,
             next_run_at=next_run_at,
         )
-        return RedirectResponse(url="/settings?saved=1", status_code=303)
+        return _settings_saved_redirect(scheduler)
 
     _register_retention_settings_routes(app, configuration, store, scheduler)
     _register_device_settings_routes(app, configuration, store, scheduler)

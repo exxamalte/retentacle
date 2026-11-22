@@ -974,3 +974,46 @@ class TestScheduledRunWithoutDevices:
             assert "unreadable settings" in scheduler.last_error
         finally:
             await scheduler.stop()
+
+
+class TestNextSlotProjection:
+    """Tests for moving an existing grid onto a different interval."""
+
+    def test_projection_keeps_the_grid_time(self):
+        """Test a longer interval lands on the same wall-clock time."""
+        anchor = datetime.now(UTC) - timedelta(days=2, hours=3)
+        scheduler = BackupScheduler(Mock(), 3600, last_automatic_run_at=anchor)
+
+        projected = scheduler.next_slot(86400)
+
+        assert projected is not None
+        assert (projected - anchor).total_seconds() % 86400 == 0
+        assert projected > datetime.now(UTC)
+        assert projected.hour == anchor.hour
+        assert projected.minute == anchor.minute
+
+    def test_projection_handles_shorter_intervals(self):
+        """Test shrinking the interval also stays on the grid phase."""
+        anchor = datetime.now(UTC) - timedelta(hours=30)
+        scheduler = BackupScheduler(Mock(), 86400, last_automatic_run_at=anchor)
+
+        projected = scheduler.next_slot(3600)
+
+        assert (projected - anchor).total_seconds() % 3600 == 0
+        assert projected > datetime.now(UTC)
+
+    def test_projection_needs_a_grid_origin(self):
+        """Test an unknown schedule cannot be projected."""
+        scheduler = BackupScheduler(Mock(), 3600)
+
+        assert scheduler.anchor is None
+        assert scheduler.next_slot() is None
+        assert scheduler.next_slot(86400) is None
+
+    def test_projection_ignores_empty_intervals(self):
+        """Test a disabled interval has no next slot."""
+        anchor = datetime.now(UTC) - timedelta(days=1)
+        scheduler = BackupScheduler(Mock(), 3600, last_automatic_run_at=anchor)
+
+        assert scheduler.next_slot(0) is None
+        assert scheduler.anchor == anchor

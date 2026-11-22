@@ -11,7 +11,19 @@
   </div>
 
   {% if saved %}
-    <script>showToast("Settings saved. The updated schedule takes effect immediately; retention is applied after the next successful backup.", "success");</script>
+    {% if request.query_params.get('next_run') %}
+      <script>
+        (function () {
+          const when = new Date({{ request.query_params.get('next_run')|tojson }});
+          const label = Number.isNaN(when.getTime())
+            ? "Settings saved. The updated schedule takes effect immediately."
+            : "Settings saved. Next automatic backup: " + when.toLocaleString() + ".";
+          showToast(label, "success");
+        })();
+      </script>
+    {% else %}
+      <script>showToast("Settings saved. The updated schedule takes effect immediately; retention is applied after the next successful backup.", "success");</script>
+    {% endif %}
   {% endif %}
 
   {% if error %}
@@ -49,7 +61,8 @@
             {% if automatic_backups %}required{% endif %}
           >
           <p class="field-help">
-            When the next automatic backup should run.
+            When the next automatic backup should run. Repeating backups
+            continue from this time, so a daily schedule keeps this clock time.
           </p>
         </div>
 

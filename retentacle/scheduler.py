@@ -17,6 +17,21 @@ _LOGGER = logging.getLogger(__name__)
 _WALL_CLOCK_POLL_SECONDS = 60.0
 
 
+def _slot_after(anchor: datetime, interval: float, now: datetime) -> datetime:
+    """Return the first grid slot strictly after ``now``.
+
+    Slots are multiples of ``interval`` counted from ``anchor``, so a grid
+    keeps its wall-clock phase no matter how late a run happened or how long
+    the server was down.
+    """
+    elapsed = (now - anchor).total_seconds()
+    steps = max(1, int(elapsed // interval) + 1)
+    candidate = anchor + timedelta(seconds=steps * interval)
+    if candidate <= now:
+        candidate += timedelta(seconds=interval)
+    return candidate
+
+
 class BackupScheduler:
     """Run backups periodically in the background."""
 
@@ -297,6 +312,26 @@ class BackupScheduler:
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Unable to save the last automatic backup duration")
 
+    @property
+    def anchor(self) -> datetime | None:
+        """Grid origin that keeps runs at the chosen wall-clock time."""
+        return self._anchor_at
+
+    def next_slot(self, interval: float | None = None) -> datetime | None:
+        """Return the next run on the current grid for another interval.
+
+        Used when the repeat interval changes: projecting the existing grid
+        origin onto the new interval keeps the usual backup time instead of
+        moving the schedule to the moment the settings page was opened. None
+        when no run has fixed a grid origin yet.
+        """
+        if self._anchor_at is None:
+            return None
+        step = float(self._interval if interval is None else interval)
+        if step <= 0:
+            return None
+        return _slot_after(self._anchor_at, step, datetime.now(UTC))
+
     def _next_after_run(
         self, scheduled: datetime | None, *, fix_anchor: bool = True
     ) -> datetime:
@@ -315,11 +350,7 @@ class BackupScheduler:
         now = datetime.now(UTC)
         interval = self._interval if self._interval > 0 else 3600
         anchor = self._anchor_at or scheduled or now
-        elapsed = (now - anchor).total_seconds()
-        steps = max(1, int(elapsed // interval) + 1)
-        candidate = anchor + timedelta(seconds=steps * interval)
-        if candidate <= now:
-            candidate += timedelta(seconds=interval)
+        candidate = _slot_after(anchor, interval, now)
         if fix_anchor:
             # Fix the grid origin so subsequent runs stay on the same slots.
             self._anchor_at = anchor
