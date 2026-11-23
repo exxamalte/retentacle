@@ -264,12 +264,26 @@ backs up all devices currently listed in the overview, falling back to the
 configured or discovered devices when the overview is empty. Next to it,
 **Add devices** jumps straight to the device section of the Settings page. On
 a fresh install both actions also appear in the "No backups yet" panel.
+Devices added on the Settings page are kept in IP order — compared as numbers,
+not as text, so `10.10.4.9` comes before `10.10.4.10`, with IPv4 addresses
+ahead of IPv6 ones. The list is sorted when it is read as well, so a device
+file written by an older version lines up again without re-adding anything,
+and adding, removing or toggling devices cannot push the list out of order.
+The overview and the scheduled backup order follow the same sequence.
+
 Each device row in the overview offers its actions — view backups, open the
 device web UI, and back up this device — as compact icon buttons with
 tooltips and screen-reader labels, so the table stays readable without
 horizontal scrolling. The device detail page keeps these as labelled buttons,
 including **Back up this device**, to back up just that device without
 waiting for the next scheduled run.
+
+The overview subtitle and a note under the status cards also count the devices
+that are configured but have no backup yet, naming up to five of their addresses
+and the remainder. A device that cannot be reached therefore stays visible
+instead of quietly missing from the table; before the first backup exists, the
+"No backups yet" panel carries the same count in its place. Read-only users see
+the count as well and are pointed to an administrator.
 
 Each device in the overview shows whether it is included in automatic backups
 and whether its latest backup is recent. A backup is considered recent when it

@@ -2,12 +2,13 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+import ipaddress
 import json
 from pathlib import Path
 import tempfile
 
 from retentacle.retention import RetentionPolicy
-from retentacle.storage import BackupStore
+from retentacle.storage import BackupStore, sort_ip_addresses
 
 
 def _record(
@@ -507,3 +508,48 @@ class TestBackupStore:
 
             assert settings_path.exists()
             assert store.get_settings() == {"interval": 60}
+
+
+class TestIpSortKey:
+    """Tests for the natural ordering of IP addresses."""
+
+    def test_ipv4_addresses_sort_numerically(self):
+        """Test octets compare as numbers, not as text."""
+        values = ["10.10.4.10", "10.10.4.9", "10.10.4.2", "192.168.1.1"]
+
+        assert sort_ip_addresses(values) == [
+            "10.10.4.2",
+            "10.10.4.9",
+            "10.10.4.10",
+            "192.168.1.1",
+        ]
+
+    def test_families_do_not_interleave(self):
+        """Test IPv4 addresses come before IPv6 ones."""
+        values = ["2001:db8::2", "10.10.4.20", "2001:db8::1", "10.10.4.3"]
+
+        assert sort_ip_addresses(values) == [
+            "10.10.4.3",
+            "10.10.4.20",
+            "2001:db8::1",
+            "2001:db8::2",
+        ]
+
+    def test_non_addresses_come_last(self):
+        """Test unusable values keep a stable text order behind real ones."""
+        values = ["not-an-ip", "10.10.4.5", "also-not-an-ip"]
+
+        assert sort_ip_addresses(values) == [
+            "10.10.4.5",
+            "also-not-an-ip",
+            "not-an-ip",
+        ]
+
+    def test_accepts_address_objects(self):
+        """Test address objects are ordered and returned as text."""
+        values = [
+            ipaddress.ip_address("10.10.4.10"),
+            ipaddress.ip_address("10.10.4.9"),
+        ]
+
+        assert sort_ip_addresses(values) == ["10.10.4.9", "10.10.4.10"]

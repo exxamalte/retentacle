@@ -56,7 +56,7 @@ from .recovery import (
 )
 from .retention import RETENTION_FIELDS, RetentionPolicy, retention_policy_from_settings
 from .scheduler import BackupScheduler
-from .storage import BackupStore, device_display_name
+from .storage import BackupStore, device_display_name, sort_ip_addresses
 from .templating import templates
 from .updates import refresh_update_info
 from .users import UserRole, UserStore
@@ -417,7 +417,13 @@ def _discover_stream(configured: list[str], timeout: float) -> Iterator[str]:
 
 
 def _saved_ip_addresses(store: BackupStore) -> list[str]:
-    """Return valid device IP addresses saved via the web UI."""
+    """Return valid device IP addresses saved via the web UI, in IP order.
+
+    The stored list keeps the order devices were added in, so it is sorted on
+    the way out: the settings table, the backup order and the overview then all
+    agree, and a list saved by an older version is displayed correctly without
+    having to be written again.
+    """
     saved = store.get_settings().get("ip_addresses")
     if not isinstance(saved, list):
         return []
@@ -427,7 +433,7 @@ def _saved_ip_addresses(store: BackupStore) -> list[str]:
             ip_addresses.append(str(ipaddress.ip_address(str(value))))
         except ValueError:
             _LOGGER.warning("Ignoring invalid saved device IP address: %r", value)
-    return ip_addresses
+    return sort_ip_addresses(ip_addresses)
 
 
 def _save_device_ip_addresses(store: BackupStore, raw_values: list[str]) -> str | None:
@@ -445,7 +451,9 @@ def _save_device_ip_addresses(store: BackupStore, raw_values: list[str]) -> str 
     for ip_address in new_ip_addresses:
         if ip_address not in ip_addresses:
             ip_addresses.append(ip_address)
-    settings["ip_addresses"] = ip_addresses
+    # Sorted on the way in as well, so the stored file stays easy to read and
+    # edit by hand.
+    settings["ip_addresses"] = sort_ip_addresses(ip_addresses)
     store.save_settings(settings)
     return None
 
@@ -502,6 +510,29 @@ def _recent_backup_cutoff(scheduler: BackupScheduler, now: datetime) -> datetime
     else:
         window = timedelta(hours=24)
     return now - window
+
+
+def _devices_without_backups(
+    configuration: Configuration, store: BackupStore
+) -> list[str]:
+    """Return configured devices that do not have a single backup yet.
+
+    Devices covered only by live discovery are left out: without a fixed list
+    there is nothing meaningful to report as missing, and a hint that is wrong
+    most of the time is worse than none.
+    """
+    configured = _effective_ip_addresses(configuration, store)
+    if not configured:
+        return []
+    backed_up = {
+        _normalized_ip_address(device.get("ip_address", ""))
+        for device in store.devices()
+    }
+    return sort_ip_addresses(
+        ip_address
+        for ip_address in configured
+        if _normalized_ip_address(ip_address) not in backed_up
+    )
 
 
 def _device_overviews(
@@ -980,7 +1011,7 @@ def _automatic_toggle_ip_addresses(
             ip_addresses.append(canonical)
     else:
         ip_addresses = [item for item in ip_addresses if item != canonical]
-    return ip_addresses
+    return sort_ip_addresses(ip_addresses)
 
 
 def _register_device_automatic_routes(
@@ -1372,6 +1403,7 @@ def _register_routes(
                 "devices": _device_overviews(
                     configuration, store, scheduler, datetime.now(UTC)
                 ),
+                "pending_backups": _devices_without_backups(configuration, store),
                 "scheduler": scheduler,
                 "last_backup": store.latest_backup_time(automatic_only=True),
                 "backup_size": _format_bytes(store.backup_size()),

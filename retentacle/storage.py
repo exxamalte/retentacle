@@ -1,5 +1,6 @@
 """Persistent storage for device backups."""
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 import ipaddress
 from pathlib import Path
@@ -78,14 +79,25 @@ def device_display_name(record: BackupRecord) -> str:
     return str(record.get("ip_address") or "Unknown device")
 
 
-def _ip_sort_key(value: str) -> tuple[int, int, bytes]:
-    """Return a sort key that orders IP addresses naturally."""
+def ip_sort_key(value: object) -> tuple[int, int, bytes]:
+    """Return a sort key that orders IP addresses naturally.
+
+    Addresses come first, grouped by family so IPv4 and IPv6 do not interleave
+    by accident, then numerically — so ``10.10.4.9`` sorts before
+    ``10.10.4.10`` instead of after it as plain text would. Values that are not
+    addresses keep their text order at the end.
+    """
     value = str(value)
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
         return (1, 0, value.encode())
     return (0, address.version, address.packed)
+
+
+def sort_ip_addresses(values: Iterable[object]) -> list[str]:
+    """Return IP addresses in natural numeric order."""
+    return sorted((str(value) for value in values), key=ip_sort_key)
 
 
 class BackupStore:
@@ -253,5 +265,5 @@ class BackupStore:
                 summary["latest"] = record
                 summary["display_name"] = device_display_name(record)
         return sorted(
-            summaries.values(), key=lambda item: _ip_sort_key(item["ip_address"])
+            summaries.values(), key=lambda item: ip_sort_key(item["ip_address"])
         )
