@@ -4393,7 +4393,7 @@ class TestDeviceOrderIsStable:
 
 
 class TestDevicesWithoutBackups:
-    """Tests for the dashboard hint about devices lacking a backup."""
+    """Tests for the dashboard count of devices lacking a backup."""
 
     def _app(self, tmpdir, configured, backed_up=()):
         """Build an app with the given configured and backed-up devices."""
@@ -4428,7 +4428,7 @@ class TestDevicesWithoutBackups:
             ]
 
     def test_listed_in_ip_order(self):
-        """Test the hint uses the same numeric order as the tables."""
+        """Test the count uses the same numeric order as the tables."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, store = self._app(
                 tmpdir, ["10.10.4.100", "10.10.4.9", "2001:db8::2", "10.10.4.20"]
@@ -4452,8 +4452,8 @@ class TestDevicesWithoutBackups:
 
             assert _devices_without_backups(config, store) == []
 
-    def test_hint_lists_addresses_for_admins(self):
-        """Test the dashboard names the devices and offers the fix."""
+    def test_subtitle_counts_the_missing_devices(self):
+        """Test the quiet subtitle line is the only place this is reported."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = self._app(
                 tmpdir,
@@ -4463,51 +4463,11 @@ class TestDevicesWithoutBackups:
             with _client(app) as client:
                 page = client.get("/").text
 
-        assert "2 devices have no backup yet" in page
-        assert '<span class="mono">10.10.4.10, 10.10.4.30</span>.' in page
-        assert "/settings#devices" in page
+        assert "1 device with backups" in page
         assert "· 2 devices without a backup" in page
 
-    def test_long_lists_are_summarized(self):
-        """Test many missing devices are truncated instead of wrapping far."""
-        configured = [f"10.10.4.{10 + index}" for index in range(8)]
-        with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = self._app(tmpdir, configured, backed_up=["10.10.4.10"])
-            with _client(app) as client:
-                page = client.get("/").text
-
-        assert "7 devices have no backup yet" in page
-        assert "10.10.4.15</span> and 2 more." in page
-        assert "10.10.4.16" not in page
-
-    def test_nothing_to_report_when_all_are_backed_up(self):
-        """Test a healthy installation shows no hint at all."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = self._app(
-                tmpdir,
-                ["10.10.4.9", "10.10.4.10"],
-                backed_up=["10.10.4.9", "10.10.4.10"],
-            )
-            with _client(app) as client:
-                page = client.get("/").text
-
-        assert 'class="pending-backups"' not in page
-        assert "without a backup" not in page
-
-    def test_empty_state_uses_the_waiting_count(self):
-        """Test the first-run panel mentions configured devices already."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            app, _ = self._app(tmpdir, ["10.10.4.9", "10.10.4.10"])
-            with _client(app) as client:
-                page = client.get("/").text
-
-        assert "No devices backed up yet" in page
-        assert "2 configured devices have no backup yet" in page
-        # The separate hint would repeat the panel in that state.
-        assert 'class="pending-backups"' not in page
-
-    def test_read_only_users_get_the_advice(self):
-        """Test viewers see the hint without administrative actions."""
+    def test_read_only_users_see_the_count(self):
+        """Test viewers get the same subtitle without administrative actions."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = self._app(
                 tmpdir, ["10.10.4.9", "10.10.4.30"], backed_up=["10.10.4.9"]
@@ -4520,7 +4480,35 @@ class TestDevicesWithoutBackups:
                 )
                 page = client.get("/").text
 
-        assert "1 device has no backup yet" in page
-        assert "Ask an administrator" in page
-        assert "Start a backup to change that" not in page
-        assert "/settings#devices" not in page.split('class="pending-backups"')[1]
+        assert "· 1 device without a backup" in page
+        assert "Run backup now" not in page
+
+    def test_nothing_is_reported_when_all_are_backed_up(self):
+        """Test a healthy installation shows no extra wording at all."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = self._app(
+                tmpdir,
+                ["10.10.4.9", "10.10.4.10"],
+                backed_up=["10.10.4.9", "10.10.4.10"],
+            )
+            with _client(app) as client:
+                page = client.get("/").text
+
+        assert "without a backup" not in page
+        assert "no backup yet" not in page
+
+    def test_no_warning_message_anywhere(self):
+        """Test the removed warning does not come back in any state."""
+        states = (
+            (["10.10.4.9", "10.10.4.30"], ["10.10.4.9"]),  # some missing
+            (["10.10.4.9", "10.10.4.30"], []),  # fresh install
+            ([], []),  # nothing configured
+        )
+        for configured, backed_up in states:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                app, _ = self._app(tmpdir, configured, backed_up)
+                with _client(app) as client:
+                    page = client.get("/").text
+
+            assert "no backup yet" not in page
+            assert "pending-backups" not in page
