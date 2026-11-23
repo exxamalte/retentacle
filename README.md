@@ -411,10 +411,10 @@ all interfaces, and reports health via the public `/health` endpoint.
         - traefik.http.routers.retentacle.entrypoints=websecure
         - traefik.http.routers.retentacle.tls=true
   ```
-* **Device discovery** — mDNS discovery needs direct access to the local
-  network. Run the container with `network_mode: host` (see the commented
-  lines in the compose file) and add `--discover`, or configure device IP
-  addresses in the web UI instead, which works with plain port mappings.
+* **Device discovery** — mDNS discovery needs direct access to the network 
+  where the Shelly devices are located. Run the container with `network_mode: host`
+  (see the commented lines in the compose file) or configure a `macvlan` network 
+  interface that is connected to the network where the Shelly devices are located.
 
 * **One-shot backups** — the same image works for cron-style single runs:
 
