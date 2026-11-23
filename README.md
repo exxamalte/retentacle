@@ -278,6 +278,13 @@ horizontal scrolling. The device detail page keeps these as labelled buttons,
 including **Back up this device**, to back up just that device without
 waiting for the next scheduled run.
 
+The overview subtitle and a note under the status cards also count the devices
+that are configured but have no backup yet, naming up to five of their addresses
+and the remainder. A device that cannot be reached therefore stays visible
+instead of quietly missing from the table; before the first backup exists, the
+"No backups yet" panel carries the same count in its place. Read-only users see
+the count as well and are pointed to an administrator.
+
 Each device in the overview shows whether it is included in automatic backups
 and whether its latest backup is recent. A backup is considered recent when it
 is within the configured automatic backup interval (plus a short grace period),

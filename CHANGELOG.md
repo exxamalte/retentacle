@@ -16,6 +16,7 @@
 * Refuse to start when the data folder or a stored database cannot be written, logging who owns the folder, which user the server runs as, the mount options and the SELinux mode, plus the matching remedy — and exit non-zero so supervisors report the failure instead of a container that silently keeps no state.
 * Log what the container entrypoint did with the data folder and which user the server runs as.
 * Documented that a `user:` setting (or Portainer's **User** field) overrides the image and disables the data-folder ownership repair.
+* Show configured devices that have no backup yet on the dashboard: the count in the subtitle, the addresses in a note under the status cards, and the same count in the first-run panel.
 * Keep the configured device list in numeric IP order: newly added or toggled devices are sorted where they are saved and read, so a list that grew out of order through discovery lines up again without re-adding anything.
 * Lengthen the on-demand device scan to 30 seconds by default, so devices that answer mDNS late are no longer missed.
 * Count down the remaining scan time on the Discover devices button while the network search runs.

@@ -22,6 +22,7 @@ from retentacle.discovery import DiscoveredDevice
 from retentacle.oidc import OIDCError
 from retentacle.server import (
     _describe_mount,
+    _devices_without_backups,
     _discovery_timeout,
     _effective_ip_addresses,
     _effective_schedule,
@@ -4389,3 +4390,137 @@ class TestDeviceOrderIsStable:
                 "10.10.4.9",
                 "10.10.4.10",
             ]
+
+
+class TestDevicesWithoutBackups:
+    """Tests for the dashboard hint about devices lacking a backup."""
+
+    def _app(self, tmpdir, configured, backed_up=()):
+        """Build an app with the given configured and backed-up devices."""
+        config = Configuration(None, tmpdir, None, interval=0)
+        store = BackupStore(config.database_path())
+        if configured:
+            store.save_settings({"ip_addresses": list(configured)})
+        for index, ip_address in enumerate(backed_up):
+            store.add(
+                {
+                    "ip_address": ip_address,
+                    "timestamp": f"2026-11-1{index}T10:00:00+00:00",
+                    "device_info": {"gen": 3, "name": f"Shelly{ip_address}"},
+                }
+            )
+        users = UserStore(config.users_path(), pbkdf2_iterations=1)
+        users.create_user(_ADMIN_EMAIL, _ADMIN_PASSWORD, UserRole.ADMIN)
+        users.create_user("viewer@example.com", _ADMIN_PASSWORD, UserRole.VIEWER)
+        return create_app(config, store=store, users=users), store
+
+    def test_missing_devices_are_detected(self):
+        """Test only configured devices without any backup are listed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = self._app(
+                tmpdir,
+                ["10.10.4.10", "10.10.4.9", "10.10.4.30"],
+                backed_up=["10.10.4.10", "10.10.4.9"],
+            )
+
+            assert _devices_without_backups(app.state.configuration, store) == [
+                "10.10.4.30",
+            ]
+
+    def test_listed_in_ip_order(self):
+        """Test the hint uses the same numeric order as the tables."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = self._app(
+                tmpdir, ["10.10.4.100", "10.10.4.9", "2001:db8::2", "10.10.4.20"]
+            )
+
+            assert _devices_without_backups(app.state.configuration, store) == [
+                "10.10.4.9",
+                "10.10.4.20",
+                "10.10.4.100",
+                "2001:db8::2",
+            ]
+
+    def test_discovery_coverage_stays_quiet(self):
+        """Test devices covered only by discovery are not claimed as missing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Configuration(None, tmpdir, None, discover=True, interval=0)
+            store = BackupStore(config.database_path())
+            store.add(
+                {"ip_address": "10.10.4.9", "timestamp": "2026-11-15T10:00:00+00:00"}
+            )
+
+            assert _devices_without_backups(config, store) == []
+
+    def test_hint_lists_addresses_for_admins(self):
+        """Test the dashboard names the devices and offers the fix."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = self._app(
+                tmpdir,
+                ["10.10.4.9", "10.10.4.10", "10.10.4.30"],
+                backed_up=["10.10.4.9"],
+            )
+            with _client(app) as client:
+                page = client.get("/").text
+
+        assert "2 devices have no backup yet" in page
+        assert '<span class="mono">10.10.4.10, 10.10.4.30</span>.' in page
+        assert "/settings#devices" in page
+        assert "· 2 devices without a backup" in page
+
+    def test_long_lists_are_summarized(self):
+        """Test many missing devices are truncated instead of wrapping far."""
+        configured = [f"10.10.4.{10 + index}" for index in range(8)]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = self._app(tmpdir, configured, backed_up=["10.10.4.10"])
+            with _client(app) as client:
+                page = client.get("/").text
+
+        assert "7 devices have no backup yet" in page
+        assert "10.10.4.15</span> and 2 more." in page
+        assert "10.10.4.16" not in page
+
+    def test_nothing_to_report_when_all_are_backed_up(self):
+        """Test a healthy installation shows no hint at all."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = self._app(
+                tmpdir,
+                ["10.10.4.9", "10.10.4.10"],
+                backed_up=["10.10.4.9", "10.10.4.10"],
+            )
+            with _client(app) as client:
+                page = client.get("/").text
+
+        assert 'class="pending-backups"' not in page
+        assert "without a backup" not in page
+
+    def test_empty_state_uses_the_waiting_count(self):
+        """Test the first-run panel mentions configured devices already."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = self._app(tmpdir, ["10.10.4.9", "10.10.4.10"])
+            with _client(app) as client:
+                page = client.get("/").text
+
+        assert "No devices backed up yet" in page
+        assert "2 configured devices have no backup yet" in page
+        # The separate hint would repeat the panel in that state.
+        assert 'class="pending-backups"' not in page
+
+    def test_read_only_users_get_the_advice(self):
+        """Test viewers see the hint without administrative actions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = self._app(
+                tmpdir, ["10.10.4.9", "10.10.4.30"], backed_up=["10.10.4.9"]
+            )
+            with TestClient(app) as client:
+                client.post(
+                    "/login",
+                    data={"email": "viewer@example.com", "password": _ADMIN_PASSWORD},
+                    follow_redirects=False,
+                )
+                page = client.get("/").text
+
+        assert "1 device has no backup yet" in page
+        assert "Ask an administrator" in page
+        assert "Start a backup to change that" not in page
+        assert "/settings#devices" not in page.split('class="pending-backups"')[1]

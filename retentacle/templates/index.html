@@ -10,6 +10,9 @@
         {% else %}
           No devices backed up yet
         {% endif %}
+        {% if pending_backups %}
+          · {{ pending_backups|length }} device{% if pending_backups|length != 1 %}s{% endif %} without a backup
+        {% endif %}
       </p>
     </div>
     {% if request.state.user.role == 'admin' %}
@@ -76,6 +79,22 @@
       <p class="stat-value">{{ scheduler.next_run|format_timestamp }}</p>
     </div>
   </section>
+
+  {% if pending_backups and devices %}
+    {% set waiting = pending_backups|length %}
+    <p class="pending-backups">
+      <svg class="icon" aria-hidden="true"><use href="#icon-alert"/></svg>
+      <span>
+        {{ waiting }} device{{ "" if waiting == 1 else "s" }} {{ "has" if waiting == 1 else "have" }} no backup yet:
+        <span class="mono">{{ pending_backups[:5]|join(", ") }}</span>{% if waiting > 5 %} and {{ waiting - 5 }} more{% endif %}.
+        {% if request.state.user.role == "admin" %}
+          Start a backup to change that, or check that those devices are reachable and enabled for <a href="/settings#devices">automatic backups</a>.
+        {% else %}
+          Ask an administrator to back them up or to check that they are reachable and enabled for automatic backups.
+        {% endif %}
+      </span>
+    </p>
+  {% endif %}
 
   {% if devices %}
     <section class="card" aria-label="Devices">
@@ -159,7 +178,19 @@
     <section class="card empty">
       <h2>No backups yet</h2>
       <p>
-        {% if request.state.user.role == 'admin' %}
+        {% if pending_backups %}
+          {% if pending_backups|length == 1 %}
+            One configured device has no backup yet.
+          {% else %}
+            {{ pending_backups|length }} configured devices have no backup yet.
+          {% endif %}
+          {% if request.state.user.role == 'admin' %}
+            The first backup runs automatically according to the configured
+            interval, or right now if you start one below.
+          {% else %}
+            Ask an administrator to run the first backup.
+          {% endif %}
+        {% elif request.state.user.role == 'admin' %}
           The first backup will run automatically according to the configured
           interval. Add devices to get started, or back up the currently
           configured devices right now.

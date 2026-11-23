@@ -512,6 +512,29 @@ def _recent_backup_cutoff(scheduler: BackupScheduler, now: datetime) -> datetime
     return now - window
 
 
+def _devices_without_backups(
+    configuration: Configuration, store: BackupStore
+) -> list[str]:
+    """Return configured devices that do not have a single backup yet.
+
+    Devices covered only by live discovery are left out: without a fixed list
+    there is nothing meaningful to report as missing, and a hint that is wrong
+    most of the time is worse than none.
+    """
+    configured = _effective_ip_addresses(configuration, store)
+    if not configured:
+        return []
+    backed_up = {
+        _normalized_ip_address(device.get("ip_address", ""))
+        for device in store.devices()
+    }
+    return sort_ip_addresses(
+        ip_address
+        for ip_address in configured
+        if _normalized_ip_address(ip_address) not in backed_up
+    )
+
+
 def _device_overviews(
     configuration: Configuration,
     store: BackupStore,
@@ -1380,6 +1403,7 @@ def _register_routes(
                 "devices": _device_overviews(
                     configuration, store, scheduler, datetime.now(UTC)
                 ),
+                "pending_backups": _devices_without_backups(configuration, store),
                 "scheduler": scheduler,
                 "last_backup": store.latest_backup_time(automatic_only=True),
                 "backup_size": _format_bytes(store.backup_size()),
