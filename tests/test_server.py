@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -3736,9 +3737,10 @@ class TestDeviceAutomaticToggle:
                 )
 
             assert response.status_code == 303
+            # Materialized and toggled devices share one IP-ordered list.
             assert store.get_settings()["ip_addresses"] == [
-                "192.168.9.9",
                 "192.168.1.10",
+                "192.168.9.9",
             ]
 
     def test_disable_removes_only_that_device(self):
@@ -4315,3 +4317,75 @@ class TestDiscoveryTimeout:
         assert "x-discovery-timeout" in page
         assert "startCountdown(" in page
         assert "almost done" in page
+
+
+class TestDeviceOrderIsStable:
+    """Tests for the order of the configured device list."""
+
+    _LEGACY = ["10.10.4.10", "10.10.4.9", "192.168.1.5", "2001:db8::1"]
+
+    def test_a_legacy_list_displays_in_ip_order(self):
+        """Test stored append order does not decide the settings table."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": list(self._LEGACY)})
+            with _client(app) as client:
+                body = client.get("/settings").text
+                body = body[body.find('id="devices"') :]
+
+            listed = re.findall(r'class="device-ip">([^<]+)<', body)
+
+        assert listed == ["10.10.4.9", "10.10.4.10", "192.168.1.5", "2001:db8::1"]
+
+    def test_adding_devices_persists_them_in_order(self):
+        """Test newly added devices do not just pile up at the end."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": list(self._LEGACY)})
+            with _client(app) as client:
+                client.post(
+                    "/settings/devices",
+                    data={"ip_addresses": "10.10.4.2"},
+                    follow_redirects=False,
+                )
+
+            assert store.get_settings()["ip_addresses"] == [
+                "10.10.4.2",
+                "10.10.4.9",
+                "10.10.4.10",
+                "192.168.1.5",
+                "2001:db8::1",
+            ]
+
+    def test_backup_devices_follow_the_same_order(self):
+        """Test scheduled and manual runs use the sorted device list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": list(self._LEGACY), "interval": 3600})
+            config = app.state.configuration
+
+            assert _effective_ip_addresses(config, store) == [
+                "10.10.4.9",
+                "10.10.4.10",
+                "192.168.1.5",
+                "2001:db8::1",
+            ]
+
+    def test_automatic_toggle_keeps_the_order(self):
+        """Test opting one device in or out does not reorder the rest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["10.10.4.10", "10.10.4.9"]})
+            store.add(
+                {"ip_address": "10.10.4.2", "timestamp": "2026-11-15T10:00:00+00:00"}
+            )
+            with _client(app) as client:
+                client.post(
+                    "/devices/10.10.4.2/automatic/enable", follow_redirects=False
+                )
+
+            assert store.get_settings()["ip_addresses"] == [
+                "10.10.4.2",
+                "10.10.4.9",
+                "10.10.4.10",
+            ]
