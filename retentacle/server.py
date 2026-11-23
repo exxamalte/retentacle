@@ -67,7 +67,12 @@ _LOGGER = logging.getLogger(__name__)
 _WRITE_PROBE = ".write-test"
 
 _STATIC_DIR = Path(__file__).parent / "static"
-_DISCOVERY_TIMEOUT = 5.0
+# mDNS discovery budget in seconds, overridable with the
+# RETENTACLE_DISCOVERY_TIMEOUT environment variable. Devices answer with a
+# random delay, and bridges or sleepy devices may only reply on a later
+# repetition, so a short window regularly misses devices.
+_DISCOVERY_TIMEOUT = 30.0
+_DISCOVERY_TIMEOUT_ENV = "RETENTACLE_DISCOVERY_TIMEOUT"
 _INTERVAL_PRESETS = (
     ("1h", "Every hour"),
     ("3h", "Every 3 hours"),
@@ -345,6 +350,32 @@ def _new_discovered_devices(
     return sorted(new_devices, key=lambda device: device.sort_key)
 
 
+def _discovery_timeout() -> float:
+    """Return the discovery budget in seconds, including the env override."""
+    raw = os.environ.get(_DISCOVERY_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return _DISCOVERY_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        _LOGGER.warning(
+            "Ignoring invalid %s=%r, using %.0f seconds",
+            _DISCOVERY_TIMEOUT_ENV,
+            raw,
+            _DISCOVERY_TIMEOUT,
+        )
+        return _DISCOVERY_TIMEOUT
+    if value <= 0:
+        _LOGGER.warning(
+            "Ignoring non-positive %s=%r, using %.0f seconds",
+            _DISCOVERY_TIMEOUT_ENV,
+            raw,
+            _DISCOVERY_TIMEOUT,
+        )
+        return _DISCOVERY_TIMEOUT
+    return value
+
+
 def _discovery_event(device: DiscoveredDevice) -> str:
     """Serialize a discovered device as a newline-delimited JSON event."""
     return (
@@ -360,12 +391,12 @@ def _discovery_event(device: DiscoveredDevice) -> str:
     )
 
 
-def _discover_stream(configured: list[str]) -> Iterator[str]:
+def _discover_stream(configured: list[str], timeout: float) -> Iterator[str]:
     """Stream newly discovered devices as newline-delimited JSON."""
     configured_addresses = set(configured)
     seen: set[str] = set()
     try:
-        for device in iter_shelly_device_details(timeout=_DISCOVERY_TIMEOUT):
+        for device in iter_shelly_device_details(timeout=timeout):
             normalized = _normalize_discovered_device(device, configured_addresses)
             if normalized is None or normalized.ip_address in seen:
                 continue
@@ -661,6 +692,7 @@ def _settings_context(
         "discovered_devices": [],
         "discovery_ran": False,
         "discovery_error": None,
+        "discovery_timeout": _discovery_timeout(),
         "saved": False,
         "oidc": _oidc_form_context(store),
     }
@@ -704,7 +736,7 @@ def _register_device_settings_routes(
         require_admin(request)
         try:
             discovered = await asyncio.to_thread(
-                discover_shelly_device_details, timeout=_DISCOVERY_TIMEOUT
+                discover_shelly_device_details, timeout=_discovery_timeout()
             )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Device discovery failed")
@@ -733,12 +765,16 @@ def _register_device_settings_routes(
     async def discover_devices_stream(request: Request):
         """Stream newly discovered devices as newline-delimited JSON."""
         require_admin(request)
+        timeout = _discovery_timeout()
         return StreamingResponse(
-            _discover_stream(_saved_ip_addresses(store)),
+            _discover_stream(_saved_ip_addresses(store), timeout),
             media_type="application/x-ndjson",
             headers={
                 "Cache-Control": "no-store",
                 "X-Accel-Buffering": "no",
+                # Lets the page count down for exactly as long as the server
+                # keeps scanning.
+                "X-Discovery-Timeout": f"{timeout:g}",
             },
         )
 

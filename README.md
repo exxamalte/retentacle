@@ -376,6 +376,7 @@ all interfaces, and reports health via the public `/health` endpoint.
   | `RETENTACLE_PORT` | `8080` | HTTP port inside the container (the health check follows it; adjust the port mapping, e.g. `-e RETENTACLE_PORT=9000 -p 9000:9000`) |
   | `RETENTACLE_DATA_DIR` | `/data` | Where the databases are stored. The image pre-creates this default with the right ownership, so an empty named volume mounted at `/data` "just works" (the Docker `VOLUME` instruction cannot follow the variable, so the mount hint stays `/data`) |
   | `PUID` / `PGID` | `10001` | User/group the server runs as. The container starts as root, **takes ownership of the data folder once at startup**, then drops to these IDs — so fresh root-owned host bind mounts (the default when Docker creates them) work without any manual `chown` on the host. Set them to your host folder's owner, e.g. `PUID=1000 PGID=1000`, to keep files directly readable/editable as your user. Note that these variables only work while the container starts as root: a `user:` setting (or the **User** field in Portainer) overrides them and disables the ownership repair, see below |
+  | `RETENTACLE_DISCOVERY_TIMEOUT` | `30` | Seconds the on-demand device scan waits for mDNS answers; also shown in the Settings page countdown |
   | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Reverse-proxy support, see below |
   | `RETENTACLE_UPDATE_CHECK` / `RETENTACLE_UPDATE_REPO` / `RETENTACLE_UPDATE_TOKEN` | — | Update check, see below |
 
@@ -511,6 +512,13 @@ page, are sorted by IP address, and show the device name, model/type,
 generation, and firmware version advertised via mDNS when available. Only
 devices that are not already in the Settings device list are offered, so running
 discovery again shows just the new ones.
+
+The scan takes up to 30 seconds — mDNS answers arrive with a random delay, and
+bridges or sleeping devices often only reply to a later repetition — and the
+button counts the remaining seconds down while it runs, so the wait is
+predictable instead of an open-ended "Searching…". Set
+`RETENTACLE_DISCOVERY_TIMEOUT` (in seconds) for networks that need a longer
+window; the page text and the countdown follow that setting.
 
 The `--discover` option and `discover: true` configuration value remain
 available as a fallback when no devices are configured in Settings.
