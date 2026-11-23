@@ -16,6 +16,9 @@
 * Refuse to start when the data folder or a stored database cannot be written, logging who owns the folder, which user the server runs as, the mount options and the SELinux mode, plus the matching remedy — and exit non-zero so supervisors report the failure instead of a container that silently keeps no state.
 * Log what the container entrypoint did with the data folder and which user the server runs as.
 * Documented that a `user:` setting (or Portainer's **User** field) overrides the image and disables the data-folder ownership repair.
+* Lengthen the on-demand device scan to 30 seconds by default, so devices that answer mDNS late are no longer missed.
+* Count down the remaining scan time on the Discover devices button while the network search runs.
+* Support `RETENTACLE_DISCOVERY_TIMEOUT` to choose a different discovery window.
 * Keep the usual backup time when only the repeat interval changes: switching from hourly to daily projects the existing schedule grid onto the new interval instead of freezing the next run at the minute the settings page was opened.
 * Report the resulting next automatic backup time in the settings confirmation message.
 * Skip scheduled backups while no device is configured: the log explains that nothing is set up instead of warning about an unusable run, and an empty run no longer counts as the last automatic backup.

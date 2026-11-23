@@ -266,7 +266,9 @@
         <button class="button" type="submit">Discover devices</button>
       </form>
       <p class="field-help">
-        Scan the network via mDNS. Only devices not already added are shown.
+        Scan the network via mDNS for up to
+        {{ "%g"|format(discovery_timeout) }}
+        seconds. Only devices not already added are shown.
       </p>
     </div>
 
@@ -614,6 +616,42 @@
       const buttonLabel = button.textContent;
 
       let found = 0;
+      let deadline = 0;
+      let ticker = null;
+
+      function renderButton() {
+        button.textContent = 'Searching…';
+        if (!deadline) {
+          return;
+        }
+        // The ticking seconds are decoration: assistive technologies get the
+        // plain label plus the status messages instead of a per-second
+        // announcement.
+        const quiet = document.createElement('span');
+        quiet.setAttribute('aria-hidden', 'true');
+        const seconds = Math.ceil((deadline - Date.now()) / 1000);
+        // The scan also spends time asking each found service for its details,
+        // so the budget can run out while it is still finishing.
+        quiet.textContent = seconds > 0 ? ' ' + seconds + ' s' : ' almost done';
+        button.append(quiet);
+      }
+
+      function startCountdown(seconds) {
+        deadline = seconds > 0 ? Date.now() + seconds * 1000 : 0;
+        renderButton();
+        if (deadline && ticker === null) {
+          ticker = window.setInterval(renderButton, 500);
+        }
+      }
+
+      function stopCountdown() {
+        if (ticker !== null) {
+          window.clearInterval(ticker);
+          ticker = null;
+        }
+        deadline = 0;
+        button.textContent = buttonLabel;
+      }
 
       function compareRows(left, right) {
         const leftKey = left.dataset.sortKey || '';
@@ -689,6 +727,10 @@
           throw new Error('Discovery request failed');
         }
 
+        // The server reports how long it keeps scanning, so the countdown and
+        // the real deadline cannot drift apart.
+        startCountdown(Number(response.headers.get('x-discovery-timeout')) || 0);
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -747,8 +789,8 @@
           showError('Unable to discover devices. Check the server logs and try again.');
           status.hidden = true;
         } finally {
+          stopCountdown();
           button.disabled = false;
-          button.textContent = buttonLabel;
         }
       });
     })();

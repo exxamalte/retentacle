@@ -21,6 +21,7 @@ from retentacle.discovery import DiscoveredDevice
 from retentacle.oidc import OIDCError
 from retentacle.server import (
     _describe_mount,
+    _discovery_timeout,
     _effective_ip_addresses,
     _effective_schedule,
     _FolderState,
@@ -4244,3 +4245,73 @@ class TestScheduleIntervalChange:
                 next_run = app.state.scheduler.next_run
 
         assert abs((next_run - pending).total_seconds()) < 60
+
+
+class TestDiscoveryTimeout:
+    """Tests for the mDNS discovery time budget and its feedback."""
+
+    _ENV = "RETENTACLE_DISCOVERY_TIMEOUT"
+
+    def test_default_budget_is_thirty_seconds(self):
+        """Test the scan waits long enough for delayed mDNS answers."""
+        with patch.dict(os.environ, {self._ENV: ""}):
+            assert _discovery_timeout() == 30.0
+
+    def test_environment_overrides_the_budget(self):
+        """Test the timeout can be tuned without a code change."""
+        with patch.dict(os.environ, {self._ENV: "8.5"}):
+            assert _discovery_timeout() == 8.5
+
+    @pytest.mark.parametrize("value", ["wide", "0", "-3"])
+    def test_unusable_values_fall_back(self, value, caplog):
+        """Test nonsense budgets are ignored with a warning."""
+        with (
+            patch.dict(os.environ, {self._ENV: value}),
+            caplog.at_level("WARNING", logger="retentacle.server"),
+        ):
+            assert _discovery_timeout() == 30.0
+
+        assert "RETENTACLE_DISCOVERY_TIMEOUT" in caplog.text
+
+    def test_stream_passes_the_budget_and_advertises_it(self):
+        """Test the browser learns the exact deadline it is counting down."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            scan = Mock(return_value=iter([]))
+            with (
+                patch.dict(os.environ, {self._ENV: "12"}),
+                patch("retentacle.server.iter_shelly_device_details", scan),
+                _client(app) as client,
+            ):
+                response = client.post("/settings/discover/stream")
+
+        assert response.headers["x-discovery-timeout"] == "12"
+        scan.assert_called_once_with(timeout=12.0)
+
+    def test_form_fallback_uses_the_same_budget(self):
+        """Test the plain form path scans for just as long."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with (
+                patch.dict(os.environ, {self._ENV: "12"}),
+                patch(
+                    "retentacle.server.discover_shelly_device_details",
+                    return_value=[],
+                ) as scan,
+                _client(app) as client,
+            ):
+                client.post("/settings/discover")
+
+        assert scan.call_args.kwargs["timeout"] == 12.0
+
+    def test_page_states_and_counts_down_the_scan(self):
+        """Test the UI names the duration and can render the countdown."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                page = client.get("/settings").text
+
+        assert "Scan the network via mDNS for up to\n        30" in page
+        assert "x-discovery-timeout" in page
+        assert "startCountdown(" in page
+        assert "almost done" in page
