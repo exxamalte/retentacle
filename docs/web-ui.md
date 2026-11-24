@@ -72,8 +72,8 @@ stay inline instead: they are status, not events.
 ## Update notifications
 
 When a newer version is published, admins see a warning-toned badge in the
-header (e.g. **v2026.6.0 available**) linking to the release page; read-only
-accounts never see it. The badge appears once a check has completed — checks run
+header (e.g. **Update available: v2026.6.0**) linking to the release page;
+read-only accounts never see it. The badge appears once a check has completed — checks run
 in the background when a signed-in user views the dashboard or the Settings
 page, and results are cached for 6 hours, so the app works fine without internet
 access (it just never shows the badge). How the check classifies versions is

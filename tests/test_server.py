@@ -3576,12 +3576,26 @@ class TestUpdateBadge:
             with _client(app) as client:
                 text = client.get("/").text
 
-        assert "v9999.0.0 available" in text
+        assert "Update available: v9999.0.0" in text
+        # The old template prepended its own "v" to a tag that already has one,
+        # producing "vv9999.0.0"; a plain substring check accepted that.
+        assert "vv9999.0.0" not in text
         assert 'class="badge update-badge"' in text
         assert (
             'href="https://github.com/exxamalte/retentacle/releases/tag/v9999.0.0"'
             in text
         )
+
+    def test_badge_label_normalises_the_version_prefix(self):
+        """Test a repository that tags without a leading v still reads once."""
+        self._seed_release_cache("9999.0.1")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                text = client.get("/").text
+
+        assert "Update available: v9999.0.1" in text
+        assert "vv9999.0.1" not in text
 
     def test_viewer_does_not_see_update_badge(self):
         """Test read-only accounts never see the update badge."""

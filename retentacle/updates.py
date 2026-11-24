@@ -44,6 +44,19 @@ class UpdateInfo:
         """Whether the latest release is newer than the running version."""
         return _is_newer(self.latest, self.current)
 
+    @property
+    def latest_tag(self) -> str:
+        """The latest release name with exactly one leading ``v``.
+
+        GitHub tags decide the actual spelling, so repositories that tag
+        ``2026.11.0`` and repositories that tag ``v2026.11.0`` both render as
+        ``v2026.11.0`` instead of growing a second prefix in the UI.
+        """
+        value = self.latest.strip()
+        if value[:1].lower() == "v":
+            return value
+        return f"v{value}"
+
 
 def _split_version(value: str) -> tuple[tuple[int, ...], bool]:
     """Return the numeric release part and the pre-release flag."""
