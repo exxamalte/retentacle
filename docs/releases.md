@@ -36,6 +36,21 @@ Bump the version in `pyproject.toml`, then tag and push:
 Both kinds publish container images automatically through the *Container*
 workflow — see [Docker deployment](docker.md#image-tags) for the resulting tags.
 
+## Release notes
+
+The Release workflow generates notes from the merged pull requests in the range
+between two tags:
+
+* **Pre-releases** compare against the previously published release, so each
+  `-beta`, `-rc` or `-dev` tag lists what changed since its predecessor.
+* **Stable releases** compare against the previous *stable* tag instead of the
+  last published release. Without that, a release preceded by six betas would
+  only show the changes since beta 6 and hide everything the betas introduced.
+
+If a version line has no earlier stable tag at all (the first stable release
+after a series of `-dev` builds), the workflow falls back to the newest tag
+outside the current pre-release series.
+
 ## Controlling the check
 
 | Variable | Default | Purpose |
