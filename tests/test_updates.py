@@ -163,3 +163,22 @@ class TestUpdateInfo:
         info = UpdateInfo(current="2026.5.0.dev0", latest="v2026.6.0", html_url="u")
 
         assert info.available is True
+
+
+class TestLatestTag:
+    """Tests for the display form of the latest release name."""
+
+    @pytest.mark.parametrize(
+        ("latest", "expected"),
+        [
+            ("v2026.11.0", "v2026.11.0"),
+            ("2026.11.0", "v2026.11.0"),
+            ("V2026.11.0", "V2026.11.0"),
+            ("  v2026.11.0-beta2  ", "v2026.11.0-beta2"),
+        ],
+    )
+    def test_single_prefix(self, latest, expected):
+        """Test exactly one version prefix survives into the UI."""
+        info = UpdateInfo(current="2026.11.0", latest=latest, html_url="")
+
+        assert info.latest_tag == expected

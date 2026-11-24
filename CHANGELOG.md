@@ -1,5 +1,8 @@
 # Changes
 
+## 2026.11.1
+* Reworded the update badge to "Update available: vX.Y.Z" and stopped the version prefix from being doubled.
+
 ## 2026.11.0
 * Split the documentation into topic pages under `docs/` and show the web UI in the README with screenshots of the overview and the device history.
 * Present backups in restore-oriented zones: restorable configuration, masked settings summary, and clearly separated live state.

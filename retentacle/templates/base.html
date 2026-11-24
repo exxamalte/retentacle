@@ -1173,8 +1173,8 @@
               href="{{ update.html_url }}"
               target="_blank"
               rel="noopener noreferrer"
-              title="Retentacle {{ update.latest }} is available — you are running {{ update.current }}"
-            >v{{ update.latest }} available</a>
+              title="{{ update.latest_tag }} is available — you are running {{ update.current }}"
+            >Update available: {{ update.latest_tag }}</a>
           {% endif %}
           <div class="user-menu" data-user-menu>
             <button
