@@ -15,6 +15,10 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v7
+      # Tags are needed to find the previous stable release; the default
+      # fetch-depth of 1 does not bring them in.
+      with:
+        fetch-depth: 0
 
     - name: Classify the tag
       id: flags
@@ -39,14 +43,54 @@ jobs:
           echo "::warning::pyproject.toml version '$pyproject_version' differs from tag '${GITHUB_REF_NAME#v}'"
         fi
 
+    - name: Pick the notes start tag
+      id: notes
+      run: |
+        # GitHub builds auto-notes from the previously *published* release, so
+        # after a run of pre-releases a stable release would only show the
+        # changes since the last beta. Start the notes at the previous stable
+        # tag instead, so a stable release lists everything that shipped across
+        # all of its pre-releases.
+        if [ "${{ steps.flags.outputs.prerelease }}" = "true" ]; then
+          echo "Pre-release: notes since the previous release, as before."
+          exit 0
+        fi
+        # Two things make a simple "previous tag" lookup wrong here:
+        # * the published "prerelease" flag cannot be trusted — early tags such
+        #   as v2025.5.0-dev5 were published before pre-release classification
+        #   existed and are marked stable;
+        # * version sorting places v2026.11.0-beta6 *after* v2026.11.0, so the
+        #   newest tag is not the newest stable one.
+        # Therefore: take the newest tag matching the stable version pattern
+        # (excluding this tag). If there is none — the first stable release ever
+        # — fall back to the newest tag outside this release's own pre-release
+        # series, which is the last thing published before the beta run began.
+        previous=$(git tag --list 'v*' | awk -v tag="$GITHUB_REF_NAME" '
+            $0 != tag && $0 ~ /^v[0-9]+(\.[0-9]+)*$/ { print }
+          ' | sort --version-sort | tail -1)
+        if [ -z "$previous" ]; then
+          previous=$(git tag --list 'v*' | awk -v tag="$GITHUB_REF_NAME" '
+              $0 != tag && index($0, tag "-") != 1 { print }
+            ' | sort --version-sort | tail -1)
+        fi
+        if [ -n "$previous" ]; then
+          echo "start_tag=$previous" >> "$GITHUB_OUTPUT"
+          echo "Notes will cover $previous...$GITHUB_REF_NAME"
+        else
+          echo "No earlier tag found; GitHub will list all changes."
+        fi
+
     - name: Create GitHub Release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        START_TAG: ${{ steps.notes.outputs.start_tag }}
       run: |
         args=(--generate-notes --title "$GITHUB_REF_NAME")
         if [ "${{ steps.flags.outputs.prerelease }}" = "true" ]; then
           # Pre-releases must not become "latest", otherwise the in-app
           # update check and pip/gh users would be pointed at them.
           args+=(--prerelease --latest=false)
+        elif [ -n "$START_TAG" ]; then
+          args+=(--notes-start-tag "$START_TAG")
         fi
         gh release create "$GITHUB_REF_NAME" "${args[@]}"
