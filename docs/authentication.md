@@ -22,7 +22,10 @@ The web server ships with simple built-in user management:
   **Settings** page. Passwords must be at least 12 characters long and include
   at least one digit and one special character. They are stored as salted
   PBKDF2 hashes, never in plain text. The last admin account can neither be
-  deleted nor demoted, and admins cannot delete their own account.
+  deleted nor demoted, and admins cannot delete their own account. While a
+  single admin exists, the Users table shows an **Only admin** badge where the
+  role control would be, with a note below the table explaining how to lift the
+  lock — rather than offering a dropdown that fails on submit.
 
 ## Sessions
 
