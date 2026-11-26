@@ -4526,3 +4526,87 @@ class TestDevicesWithoutBackups:
 
             assert "no backup yet" not in page
             assert "pending-backups" not in page
+
+
+class TestLastAdminRoleLock:
+    """Tests for the users table when only one admin exists."""
+
+    def _users_section(self, client):
+        html = client.get("/settings").text
+        return html[html.find('id="users"') :]
+
+    def _row(self, section, email):
+        for row in re.findall(r"<tr>(.*?)</tr>", section, re.DOTALL):
+            if email in row:
+                return row
+        raise AssertionError(f"row for {email} not found")
+
+    def test_role_control_is_hidden_for_the_only_admin(self):
+        """Test the last admin is offered no way to change their role."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            admin = app.state.users.list_users()[0]
+            with _client(app) as client:
+                section = self._users_section(client)
+                row = self._row(section, _ADMIN_EMAIL)
+
+        assert "Only admin" in row
+        assert "<select" not in row
+        assert f"/settings/users/{admin.user_id}/role" not in section
+
+    def test_explanation_is_shown(self):
+        """Test the reason for the lock is stated instead of silent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                section = self._users_section(client)
+
+        assert "only administrator account" in section
+
+    def test_read_only_accounts_stay_assignable(self):
+        """Test promoting another account is unaffected by the lock."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            guest = app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            with _client(app) as client:
+                row = self._row(self._users_section(client), "guest@example.com")
+
+        assert "<select" in row
+        assert f"/settings/users/{guest.user_id}/role" in row
+
+    def test_control_returns_once_a_second_admin_exists(self):
+        """Test the lock lifts as soon as another admin is available."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            admin = users.list_users()[0]
+            users.create_user(
+                "second@example.com", "second-admin-pass-1", UserRole.ADMIN
+            )
+            with _client(app) as client:
+                section = self._users_section(client)
+                row = self._row(section, _ADMIN_EMAIL)
+
+        assert "<select" in row
+        assert "Only admin" not in row
+        assert "only administrator account" not in section
+        assert f"/settings/users/{admin.user_id}/role" in section
+
+    def test_renaming_the_only_admin_is_still_possible(self):
+        """Test the password reset of the locked account still works."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            admin = users.list_users()[0]
+            with _client(app) as client:
+                response = client.post(
+                    f"/settings/users/{admin.user_id}/password",
+                    data={"password": "another-admin-pass-9"},
+                    follow_redirects=False,
+                )
+
+            assert response.status_code == 303
+            assert users.verify_credentials(_ADMIN_EMAIL, "another-admin-pass-9")
+            assert users.verify_credentials(_ADMIN_EMAIL, _ADMIN_PASSWORD) is None

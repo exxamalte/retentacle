@@ -132,6 +132,7 @@ def user_management_context(users: UserStore, actor: User | None) -> dict:
     return {
         "user_rows": rows,
         "user_role_values": [role.value for role in UserRole],
+        "admin_count": admin_count,
         "user_form": {"email": "", "role": UserRole.VIEWER.value},
     }
 

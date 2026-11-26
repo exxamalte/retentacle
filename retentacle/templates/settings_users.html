@@ -28,20 +28,24 @@
               <td><span class="badge{% if row.user.role == 'admin' %} success{% endif %}">{{ row.user.role.label }}</span></td>
               <td>{{ row.user.created_at|format_timestamp }}</td>
               <td>
-                <form method="post" action="/settings/users/{{ row.user.user_id }}/role" class="row-actions">
-                  <select class="input" name="role" aria-label="Role for {{ row.user.email }}">
-                    {% for role in user_role_values %}
-                      <option value="{{ role }}" {% if row.user.role == role %}selected{% endif %}>
-                        {% if role == 'admin' %}Administrator{% else %}Read-only{% endif %}
-                      </option>
-                    {% endfor %}
-                  </select>
-                  <button
-                    class="button small"
-                    type="submit"
-                    {% if not row.can_demote and row.user.role == 'admin' %}disabled{% endif %}
-                  >Update</button>
-                </form>
+                {% set locked = row.user.role == 'admin' and not row.can_demote %}
+                {% if locked %}
+                  <span
+                    class="badge muted"
+                    title="This is the only administrator account, so its role is locked."
+                  >Only admin</span>
+                {% else %}
+                  <form method="post" action="/settings/users/{{ row.user.user_id }}/role" class="row-actions">
+                    <select class="input" name="role" aria-label="Role for {{ row.user.email }}">
+                      {% for role in user_role_values %}
+                        <option value="{{ role }}" {% if row.user.role == role %}selected{% endif %}>
+                          {% if role == 'admin' %}Administrator{% else %}Read-only{% endif %}
+                        </option>
+                      {% endfor %}
+                    </select>
+                    <button class="button small" type="submit">Update</button>
+                  </form>
+                {% endif %}
               </td>
               <td>
                 <form method="post" action="/settings/users/{{ row.user.user_id }}/password" class="row-actions">
@@ -75,6 +79,15 @@
         </tbody>
       </table>
     </div>
+
+    {% if admin_count <= 1 %}
+      <p class="field-help">
+        This is the only administrator account, so its role is locked and it
+        cannot be deleted. Add a second administrator first if you want to
+        demote or remove this one — otherwise no account would be left to change
+        settings or run backups.
+      </p>
+    {% endif %}
 
     <div class="device-form">
       <h2>Add user</h2>
