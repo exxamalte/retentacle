@@ -445,6 +445,9 @@ def _register_middleware(app: FastAPI, users: UserStore) -> None:
         token = request.cookies.get(SESSION_COOKIE, "")
         user = users.resolve_session(token) if token else None
         request.state.user = user
+        # Needed to keep this session alive when the user changes their own
+        # password, while every other session of the account ends.
+        request.state.session_token = token
         target = _redirect_target(path, user, users.has_users())
         if target is not None:
             return RedirectResponse(url=target, status_code=303)

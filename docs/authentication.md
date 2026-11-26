@@ -21,8 +21,25 @@ The web server ships with simple built-in user management:
 * Additional accounts — with either role — are created by admins on the
   **Settings** page. Passwords must be at least 12 characters long and include
   at least one digit and one special character. They are stored as salted
-  PBKDF2 hashes, never in plain text. The last admin account can neither be
-  deleted nor demoted, and admins cannot delete their own account. While a
+  PBKDF2 hashes, never in plain text.
+* The last admin account can neither be deleted nor demoted, and nobody can
+  delete the account they are signed in with. The users table does not offer
+  those actions at all — the blocked rows carry an **Only admin** or
+  **Signed in** badge that says why, instead of a button that fails on submit.
+
+### Changing a password
+
+* **Your own password** is changed from the avatar menu (**Change password**,
+  also at `/account`). That form asks for the current password, the new
+  password, and a confirmation. Changing it signs out every other device while
+  the one you are using stays signed in.
+* **Someone else's password** is set by an admin on the Settings page with
+  **Set password** — the recovery path when a colleague forgets theirs, and
+  labelled **Set first password** for an account that an identity provider
+  created without a local password.
+* Accounts without a local password (provisioned through OpenID Connect) get no
+  password-change form at all: their sign-in is managed at the provider until an
+  admin gives them a password of their own. While a
   single admin exists, the Users table shows an **Only admin** badge where the
   role control would be, with a note below the table explaining how to lift the
   lock — rather than offering a dropdown that fails on submit.
@@ -41,8 +58,10 @@ recognises the `https` scheme and marks the session cookie `Secure` — see
 
 Signed-in users get an avatar in the top right corner instead of their email
 address and a sign-out button. Clicking it opens a menu with the account name
-and role at the top, a link to the Settings page (admins only), the sign-out
-action, and the app version at the bottom. The avatar shows the profile picture
+and role at the top, a link to the Settings page (admins only), **Change
+password**, the sign-out action, and the app version at the bottom. For an
+account without a local password the menu shows **Signed in via provider** in
+place of the password link. The avatar shows the profile picture
 from the OIDC provider when the provider sends a `picture` claim — either in its
 userinfo response or in the ID token — and falls back to the first letter of the
 email address otherwise. If the picture stays missing, add the scope your

@@ -1,6 +1,9 @@
 # Changes
 
 ## 2026.11.1
+* Self-service password change from the account menu, requiring the current password, a new password and a confirmation; other people's passwords are set by admins with "Set password".
+* Password controls are hidden for accounts without a local password, which sign in through the identity provider; admins can still give them their first password.
+* The users table explains blocked deletions with a badge ("Signed in", "Only admin") instead of a silently disabled button.
 * Lock the only administrator account in the users table: no role dropdown is offered, and the reason is stated instead of failing after submit.
 * Reworded the update badge to "Update available: vX.Y.Z" and stopped the version prefix from being doubled.
 

@@ -2230,23 +2230,26 @@ class TestUserManagement:
                 )
                 assert users.resolve_session(token) is None
 
-    def test_reset_own_password_keeps_session_alive(self):
-        """Test that changing your own password keeps you signed in."""
+    def test_admin_may_not_self_reset_without_current_password(self):
+        """Test the users page cannot bypass the current-password rule."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
-            users = app.state.users
-            admin = users.list_users()[0]
+            admin = app.state.users.list_users()[0]
             with _client(app) as client:
-                old_token = client.cookies.get("retentacle_session")
                 response = client.post(
                     f"/settings/users/{admin.user_id}/password",
-                    data={"password": "unit-test-login-pass-1"},
+                    data={"password": "another-admin-pass-1"},
                     follow_redirects=False,
                 )
 
-                assert response.status_code == 303
-                assert client.get("/users").status_code == 200
-                assert users.resolve_session(old_token) is None
+                assert response.status_code == 400
+                assert "current password" in response.text
+                assert (
+                    app.state.users.verify_credentials(
+                        _ADMIN_EMAIL, "another-admin-pass-1"
+                    )
+                    is None
+                )
 
     def test_reset_password_rejects_invalid(self):
         """Test that password rules also apply on the users page."""
@@ -4594,19 +4597,220 @@ class TestLastAdminRoleLock:
         assert "only administrator account" not in section
         assert f"/settings/users/{admin.user_id}/role" in section
 
-    def test_renaming_the_only_admin_is_still_possible(self):
-        """Test the password reset of the locked account still works."""
+    def test_locked_admin_can_still_change_its_own_password(self):
+        """Test the role lock does not block the self-service password form."""
         with tempfile.TemporaryDirectory() as tmpdir:
             app, _ = _create_app(tmpdir)
             users = app.state.users
-            admin = users.list_users()[0]
             with _client(app) as client:
                 response = client.post(
-                    f"/settings/users/{admin.user_id}/password",
-                    data={"password": "another-admin-pass-9"},
+                    "/account/password",
+                    data={
+                        "current_password": _ADMIN_PASSWORD,
+                        "new_password": "another-admin-pass-9",
+                        "confirm_password": "another-admin-pass-9",
+                    },
                     follow_redirects=False,
                 )
 
             assert response.status_code == 303
             assert users.verify_credentials(_ADMIN_EMAIL, "another-admin-pass-9")
             assert users.verify_credentials(_ADMIN_EMAIL, _ADMIN_PASSWORD) is None
+
+
+class TestAccountPasswordPage:
+    """Tests for the self-service change-password flow."""
+
+    _NEW = "brand-new-pass-9"
+
+    def _form(self, current=_ADMIN_PASSWORD, new=None, confirm=None):
+        new = new or self._NEW
+        return {
+            "current_password": current,
+            "new_password": new,
+            "confirm_password": confirm if confirm is not None else new,
+        }
+
+    def test_page_offers_the_change_form(self):
+        """Test a local account sees current, new and confirm fields."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                page = client.get("/account").text
+
+        assert "Change password" in page
+        for field in ("current_password", "new_password", "confirm_password"):
+            assert f'name="{field}"' in page
+        assert "Reset" not in page
+
+    def test_provider_only_account_has_no_form(self):
+        """Test an SSO-provisioned account is told where sign-in is managed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            sso = app.state.users.create_user("sso@example.com", None, UserRole.VIEWER)
+            with TestClient(app) as client:
+                # A provider account cannot sign in by password, so seed a session.
+                token = app.state.users.create_session(sso.user_id)
+                client.cookies.set("retentacle_session", token)
+                page = client.get("/account").text
+
+        assert "no local password" in page
+        assert 'name="new_password"' not in page
+
+    def test_password_change_keeps_this_session(self):
+        """Test the active device stays signed in and others are logged out."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            admin = users.list_users()[0]
+            other_session = users.create_session(admin.user_id)
+            with _client(app) as client:
+                token = client.cookies.get("retentacle_session")
+                response = client.post(
+                    "/account/password", data=self._form(), follow_redirects=False
+                )
+
+                assert response.status_code == 303
+                assert response.headers["location"] == "/account?password_changed=1"
+                follow_up = client.get("/account")
+                assert users.verify_credentials(_ADMIN_EMAIL, self._NEW) is not None
+                assert users.verify_credentials(_ADMIN_EMAIL, _ADMIN_PASSWORD) is None
+                assert users.resolve_session(token) is not None
+                assert users.resolve_session(other_session) is None
+
+        assert follow_up.status_code == 200
+        assert "showToast" in follow_up.text
+
+    def test_mismatched_confirmation_is_refused(self):
+        """Test the two new password fields have to agree."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/account/password",
+                    data=self._form(new=self._NEW, confirm="different-pass-99"),
+                )
+
+        assert response.status_code == 400
+        assert "do not match" in response.text
+
+    def test_wrong_current_password_is_refused(self):
+        """Test guessing the current password does not change anything."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            users = app.state.users
+            with _client(app) as client:
+                response = client.post(
+                    "/account/password",
+                    data=self._form(current="not-my-password-1"),
+                )
+
+            assert response.status_code == 400
+            assert "current password is not correct" in response.text
+            assert users.verify_credentials(_ADMIN_EMAIL, self._NEW) is None
+
+    def test_weak_new_password_is_refused(self):
+        """Test the strength policy applies to the self-service form too."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                response = client.post(
+                    "/account/password",
+                    data=self._form(new="short1!", confirm="short1!"),
+                )
+
+        assert response.status_code == 400
+        assert "Password not changed" in response.text
+
+    def test_page_requires_a_login(self):
+        """Test anonymous visitors are sent to the login page."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            response = TestClient(app).get("/account", follow_redirects=False)
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/login"
+
+    def test_avatar_menu_links_to_the_account_page(self):
+        """Test the menu offers the change for local accounts only."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            sso = app.state.users.create_user("sso2@example.com", None, UserRole.VIEWER)
+            with _client(app) as client:
+                menu = client.get("/").text
+            with TestClient(app) as visitor:
+                visitor.cookies.set(
+                    "retentacle_session", app.state.users.create_session(sso.user_id)
+                )
+                sso_menu = visitor.get("/").text
+
+        assert 'href="/account"' in menu
+        assert "Change password" in menu
+        assert 'href="/account"' not in sso_menu
+        assert "Signed in via provider" in sso_menu
+
+
+class TestUsersTablePasswordColumn:
+    """Tests for the per-row password and delete affordances."""
+
+    def _section(self, client):
+        html = client.get("/settings").text
+        return html[html.find('id="users"') :]
+
+    def _row(self, section, email):
+        for row in re.findall(r"<tr>(.*?)</tr>", section, re.DOTALL):
+            if email in row:
+                return row
+        raise AssertionError(f"no row for {email}")
+
+    def test_own_row_links_to_the_account_page(self):
+        """Test the signed-in account is not offered a password override."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                row = self._row(self._section(client), _ADMIN_EMAIL)
+
+        assert 'href="/account"' in row
+        assert "Needs your current password." in row
+        assert 'name="password"' not in row
+
+    def test_other_rows_use_set_password_wording(self):
+        """Test an administrator action is labelled as what it is."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            with _client(app) as client:
+                row = self._row(self._section(client), "guest@example.com")
+
+        assert "Set password" in row
+        assert "Reset" not in row
+
+    def test_passwordless_account_offers_a_first_password(self):
+        """Test provider accounts can be given a password by an admin."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.users.create_user("sso3@example.com", None, UserRole.VIEWER)
+            with _client(app) as client:
+                row = self._row(self._section(client), "sso3@example.com")
+
+        assert "Set first password" in row
+        assert "no local password" not in row
+
+    def test_delete_reasons_are_shown(self):
+        """Test blocked deletions explain themselves instead of greying out."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.users.create_user(
+                "colleague@example.com", "colleague-pass-1", UserRole.ADMIN
+            )
+            with _client(app) as client:
+                section = self._section(client)
+                own = self._row(section, _ADMIN_EMAIL)
+                other = self._row(section, "colleague@example.com")
+
+        assert "Signed in" in own
+        assert "cannot delete the account you are signed in with" in own
+        assert "Delete" in other
+        assert 'action="/settings/users/' in other

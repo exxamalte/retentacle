@@ -59,7 +59,7 @@ from .scheduler import BackupScheduler
 from .storage import BackupStore, device_display_name, sort_ip_addresses
 from .templating import templates
 from .updates import refresh_update_info
-from .users import UserRole, UserStore
+from .users import User, UserRole, UserStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1112,10 +1112,22 @@ def _register_user_detail_settings_routes(
         return RedirectResponse(url=_SETTINGS_USERS_REDIRECT, status_code=303)
 
     @app.post("/settings/users/{user_id}/password")
-    async def reset_user_password(request: Request, user_id: int):
-        """Set a new password for a user account."""
+    async def set_user_password(request: Request, user_id: int):
+        """Set a password for another account; own changes need the current one."""
         actor = require_admin(request)
         users = request.app.state.users
+        if user_id == actor.user_id:
+            return _render_settings(
+                request,
+                configuration,
+                store,
+                scheduler,
+                status_code=400,
+                error=(
+                    "Changing your own password requires your current password."
+                    " Use Change password in the account menu."
+                ),
+            )
         body = (await request.body()).decode("utf-8", errors="replace")
         password = _parse_form_field(parse_qs(body), "password")
         try:
@@ -1194,6 +1206,67 @@ def _settings_saved_redirect(scheduler: BackupScheduler) -> RedirectResponse:
     if next_run is not None:
         target += f"&next_run={quote(next_run.isoformat(), safe='')}"
     return RedirectResponse(url=target, status_code=303)
+
+
+def _require_user(request: Request) -> User:
+    """Return the signed-in user of this request."""
+    user = current_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Login required")
+    return user
+
+
+def _register_account_routes(app: FastAPI) -> None:
+    """Register the self-service account routes for every signed-in user."""
+
+    @app.get("/account", response_class=HTMLResponse)
+    async def account_page(request: Request):
+        """Show the signed-in account and its password options."""
+        return _render_account(request)
+
+    @app.post("/account/password")
+    async def change_own_password(request: Request):
+        """Change the signed-in user's password after verifying the old one."""
+        user = _require_user(request)
+        body = (await request.body()).decode("utf-8", errors="replace")
+        form = parse_qs(body)
+        current = _parse_form_field(form, "current_password") or ""
+        new_password = _parse_form_field(form, "new_password") or ""
+        confirm = _parse_form_field(form, "confirm_password") or ""
+        if new_password != confirm:
+            return _render_account(
+                request,
+                status_code=400,
+                error="The new password and its confirmation do not match.",
+            )
+        try:
+            request.app.state.users.change_own_password(
+                user.user_id,
+                current,
+                new_password,
+                keep_session=getattr(request.state, "session_token", None),
+            )
+        except ValueError as exc:
+            return _render_account(request, status_code=400, error=str(exc))
+        return RedirectResponse(url="/account?password_changed=1", status_code=303)
+
+
+def _render_account(
+    request: Request, *, status_code: int = 200, error: str | None = None
+):
+    """Render the account page for the signed-in user."""
+    user = _require_user(request)
+    return templates.TemplateResponse(
+        request=request,
+        name="account.html",
+        status_code=status_code,
+        context={
+            # Re-read the account so the local-password state is current.
+            "user": request.app.state.users.get_user(user.user_id) or user,
+            "error": error,
+            "password_changed": request.query_params.get("password_changed") == "1",
+        },
+    )
 
 
 def _register_settings_routes(
@@ -1460,6 +1533,7 @@ def _register_routes(
     _register_backup_download_routes(app, store)
     _register_device_compare_route(app, store)
     _register_backup_routes(app, store, scheduler)
+    _register_account_routes(app)
     _register_settings_routes(app, configuration, store, scheduler)
 
 
