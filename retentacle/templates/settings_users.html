@@ -11,8 +11,8 @@
             <th scope="col">Email</th>
             <th scope="col">Role</th>
             <th scope="col">Created</th>
-            <th scope="col">New role</th>
-            <th scope="col">New password</th>
+            <th scope="col">Change role</th>
+            <th scope="col">Password</th>
             <th scope="col"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
@@ -48,31 +48,46 @@
                 {% endif %}
               </td>
               <td>
-                <form method="post" action="/settings/users/{{ row.user.user_id }}/password" class="row-actions">
-                  <input
-                    class="input"
-                    type="password"
-                    name="password"
-                    autocomplete="new-password"
-                    placeholder="At least 12 characters"
-                    minlength="12"
-                    pattern="(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,}"
-                    title="At least 12 characters, including one digit and one special character"
-                    aria-label="New password for {{ row.user.email }}"
-                    required
-                  >
-                  <button class="button small" type="submit">Reset</button>
-                </form>
+                {% if row.is_current and not row.user.has_password %}
+                  <span class="badge muted" title="This account signs in through the identity provider.">Provider only</span>
+                {% elif row.is_current %}
+                  <a class="button small" href="/account">Change password</a>
+                  <p class="field-help">Needs your current password.</p>
+                {% else %}
+                  <form method="post" action="/settings/users/{{ row.user.user_id }}/password" class="row-actions">
+                    <input
+                      class="input"
+                      type="password"
+                      name="password"
+                      autocomplete="new-password"
+                      placeholder="At least 12 characters"
+                      minlength="12"
+                      pattern="(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,}"
+                      title="At least 12 characters, including one digit and one special character"
+                      aria-label="New password for {{ row.user.email }}"
+                      required
+                    >
+                    <button class="button small" type="submit">
+                      {% if row.user.has_password %}Set password{% else %}Set first password{% endif %}
+                    </button>
+                  </form>
+                {% endif %}
               </td>
               <td>
-                <form method="post" action="/settings/users/{{ row.user.user_id }}/delete" class="row-actions">
-                  <button
-                    class="button small"
-                    type="submit"
-                    title="Delete {{ row.user.email }}"
-                    {% if not row.can_delete %}disabled{% endif %}
-                  >Delete</button>
-                </form>
+                {% if not row.can_delete %}
+                  <span
+                    class="badge muted"
+                    title="{% if row.is_current %}You cannot delete the account you are signed in with.{% else %}The only administrator account cannot be deleted.{% endif %}"
+                  >{% if row.is_current %}Signed in{% else %}Only admin{% endif %}</span>
+                {% else %}
+                  <form method="post" action="/settings/users/{{ row.user.user_id }}/delete" class="row-actions">
+                    <button
+                      class="button small"
+                      type="submit"
+                      title="Delete {{ row.user.email }}"
+                    >Delete</button>
+                  </form>
+                {% endif %}
               </td>
             </tr>
           {% endfor %}

@@ -70,6 +70,9 @@ class User:
     role: UserRole
     created_at: datetime
     picture: str | None = None
+    # Accounts created by an identity provider have no local password, so the
+    # UI must not offer them a password change.
+    has_password: bool = True
 
 
 def _picture_url(value: object) -> str | None:
@@ -172,6 +175,7 @@ def _user_from_document(document: Any) -> User | None:
         role=role,
         created_at=created_at,
         picture=_picture_url(document.get("picture")),
+        has_password=document.get("password_hash") is not None,
     )
 
 
@@ -298,8 +302,31 @@ class UserStore:
             finally:
                 db.close()
 
-    def change_password(self, user_id: int, password: object) -> None:
-        """Set a new password for the given user and end its sessions."""
+    def _password_hash(self, user_id: int) -> str | None:
+        """Return the stored password hash of an account, if it has one."""
+        with _LOCK:
+            if not self._path.exists():
+                return None
+            db = TinyDB(self._path)
+            try:
+                document = db.table(_USERS_TABLE).get(doc_id=user_id)
+            finally:
+                db.close()
+        if document is None:
+            return None
+        value = document.get("password_hash")
+        return None if value is None else str(value)
+
+    def change_password(
+        self, user_id: int, password: object, *, keep_session: object = None
+    ) -> None:
+        """Set a new password for the given user and end its sessions.
+
+        ``keep_session`` is the login token of the person performing the
+        change, so changing your own password does not sign you out. Other
+        sessions of that account always end, which is the point of a password
+        change after a suspected leak.
+        """
         validated_password = validate_password(password)
         if self.get_user(user_id) is None:
             raise ValueError("User not found.")
@@ -314,9 +341,46 @@ class UserStore:
                     },
                     doc_ids=[user_id],
                 )
-                db.table(_SESSIONS_TABLE).remove(_SESSION_QUERY.user_id == user_id)
+                self._drop_sessions(db, user_id, keep_session)
             finally:
                 db.close()
+
+    def change_own_password(
+        self, user_id: int, current: object, new: object, *, keep_session: object = None
+    ) -> None:
+        """Change a password after verifying the current one.
+
+        Use this for the self-service form: an account that signs in through
+        an identity provider has no local password to verify against, and an
+        administrator must not be able to bypass the current password of
+        another person when the person is present.
+        """
+        encoded = self._password_hash(user_id)
+        if encoded is None:
+            raise ValueError(
+                "This account signs in through your identity provider and has no"
+                " local password to change."
+            )
+        current_value = "" if current is None else str(current)
+        if not _verify_password(current_value, encoded):
+            raise ValueError("The current password is not correct.")
+        if _verify_password(str(new or ""), encoded):
+            raise ValueError("Choose a new password that differs from the current one.")
+        self.change_password(user_id, new, keep_session=keep_session)
+
+    def _drop_sessions(self, db: TinyDB, user_id: int, keep_session: object) -> None:
+        """Remove all sessions of a user except the one being used right now."""
+        keep_hash = (
+            _token_hash(str(keep_session))
+            if isinstance(keep_session, str) and keep_session
+            else None
+        )
+        for document in db.table(_SESSIONS_TABLE).all():
+            if document.get("user_id") != user_id:
+                continue
+            if keep_hash is not None and document.get("token_hash") == keep_hash:
+                continue
+            db.table(_SESSIONS_TABLE).remove(doc_ids=[document.doc_id])
 
     def change_role(self, user_id: int, role: object) -> None:
         """Change the role of the given user."""

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}Your account - {{ application_name }}{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Your account</h1>
+      <p class="subtitle">
+        {{ user.email }} · {{ user.role.label }}
+      </p>
+    </div>
+  </div>
+
+  {% if password_changed %}
+    <script>showToast("Password changed. You stay signed in here; other devices need the new one.", "success");</script>
+  {% endif %}
+
+  <section class="card settings-card" aria-label="Sign-in method">
+    <h2>Sign-in method</h2>
+    <p class="field-help">
+      {% if user.has_password %}
+        This account signs in with a local password.
+      {% else %}
+        This account was created by your identity provider and has no local
+        password. Ask an administrator to set one on the Settings page if you
+        also want to sign in with a password.
+      {% endif %}
+    </p>
+  </section>
+
+  {% if user.has_password %}
+    <section class="card settings-card" aria-label="Change password">
+      <h2>Change password</h2>
+
+      {% if error %}
+        <div class="alert" role="alert">
+          <strong>Password not changed:</strong> {{ error }}
+        </div>
+      {% endif %}
+
+      <form method="post" action="/account/password" class="device-form">
+        <div class="form-field">
+          <label for="current_password">Current password</label>
+          <input
+            class="input"
+            type="password"
+            id="current_password"
+            name="current_password"
+            autocomplete="current-password"
+            autofocus
+            required
+          >
+        </div>
+        <div class="form-field">
+          <label for="new_password">New password</label>
+          <input
+            class="input"
+            type="password"
+            id="new_password"
+            name="new_password"
+            autocomplete="new-password"
+            minlength="12"
+            pattern="(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,}"
+            title="At least 12 characters, including one digit and one special character"
+            required
+          >
+          <p class="field-help">
+            Use at least 12 characters, including one digit and one special
+            character.
+          </p>
+        </div>
+        <div class="form-field">
+          <label for="confirm_password">Confirm new password</label>
+          <input
+            class="input"
+            type="password"
+            id="confirm_password"
+            name="confirm_password"
+            autocomplete="new-password"
+            minlength="12"
+            pattern="(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,}"
+            title="Repeat the new password exactly"
+            required
+          >
+        </div>
+        <div class="form-actions">
+          <button class="button primary" type="submit">Change password</button>
+        </div>
+      </form>
+
+      <p class="field-help" style="margin-top: 1rem;">
+        Changing your password signs out every other device; the one you are
+        using now stays signed in. Accounts that sign in through the identity
+        provider have no local password, so their sign-in is managed there.
+      </p>
+    </section>
+  {% endif %}
+
+  {% if user.role == 'admin' %}
+    <p class="footer-note">
+      Looking to manage other accounts? <a href="/settings#users">Users</a> on the
+      Settings page.
+    </p>
+  {% endif %}
+{% endblock %}

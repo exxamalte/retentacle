@@ -10,6 +10,7 @@
 | `/backups/<id>` | Metadata, a manual restore section, a configuration summary, the device state at backup time, and raw JSON for a single backup. |
 | `/backups/<id>/download` | Download a backup as JSON. |
 | `/backups/<id>/restore.json` | Download only the restorable configuration, ready for `Shelly.SetConfig` (Gen 2/3) or `POST /settings` (Gen 1). |
+| `/account` | The signed-in user's own account: sign-in method and the change-password form (current, new, confirm). Read-only users can reach it too. |
 | `/settings` | Configure the backup schedule, device IP addresses, and single sign-on, and manage user accounts, roles, and passwords (admin only). |
 | `/settings` → Discover devices | On-demand mDNS scan with a countdown; see [Configuration](configuration.md#auto-discovery). |
 | `/setup` | First-run wizard to create the initial admin account. |

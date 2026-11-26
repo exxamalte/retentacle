@@ -1,6 +1,7 @@
 """Tests for the user account storage module."""
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 import tempfile
 
 import pytest
@@ -467,3 +468,103 @@ class TestSessions:
             assert user.email == "admin@example.com"
             assert user.created_at.tzinfo is not None
             assert user.created_at <= datetime.now(UTC) + timedelta(minutes=1)
+
+
+class TestChangeOwnPassword:
+    """Tests for verifying the current password before changing it."""
+
+    def _store(self, tmpdir):
+        return UserStore(Path(tmpdir) / "users.json", pbkdf2_iterations=1)
+
+    def test_password_flag_tracks_local_credentials(self):
+        """Test provider-created accounts are known to have no password."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            local = store.create_user(
+                "a@example.com", "unit-test-password-1", UserRole.ADMIN
+            )
+            sso = store.create_user("b@example.com", None, UserRole.VIEWER)
+
+            assert store.get_user(local.user_id).has_password is True
+            assert store.get_user(sso.user_id).has_password is False
+
+    def test_change_requires_the_current_password(self):
+        """Test a wrong current password leaves the account untouched."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            user = store.create_user(
+                "a@example.com", "unit-test-password-1", UserRole.ADMIN
+            )
+
+            with pytest.raises(ValueError, match="current password is not correct"):
+                store.change_own_password(
+                    user.user_id, "wrong-password-123", "brand-new-pass-9"
+                )
+
+            assert store.verify_credentials("a@example.com", "unit-test-password-1")
+
+    def test_change_rejects_the_unchanged_password(self):
+        """Test reusing the same password is refused."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            user = store.create_user(
+                "a@example.com", "unit-test-password-1", UserRole.ADMIN
+            )
+
+            with pytest.raises(ValueError, match="differs from the current"):
+                store.change_own_password(
+                    user.user_id, "unit-test-password-1", "unit-test-password-1"
+                )
+
+    def test_change_rejects_provider_only_accounts(self):
+        """Test there is nothing to verify against for SSO accounts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            user = store.create_user("a@example.com", None, UserRole.VIEWER)
+
+            with pytest.raises(ValueError, match="identity provider"):
+                store.change_own_password(user.user_id, "", "brand-new-pass-9")
+
+    def test_change_still_enforces_password_rules(self):
+        """Test the new password must meet the strength policy."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            user = store.create_user(
+                "a@example.com", "unit-test-password-1", UserRole.ADMIN
+            )
+
+            with pytest.raises(ValueError, match="at least 12 characters"):
+                store.change_own_password(user.user_id, "unit-test-password-1", "weak")
+
+    def test_change_keeps_the_active_session_only(self):
+        """Test other devices are signed out while this one survives."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            user = store.create_user(
+                "a@example.com", "unit-test-password-1", UserRole.ADMIN
+            )
+            here = store.create_session(user.user_id)
+            elsewhere = store.create_session(user.user_id)
+
+            store.change_own_password(
+                user.user_id,
+                "unit-test-password-1",
+                "brand-new-pass-9",
+                keep_session=here,
+            )
+
+            assert store.resolve_session(here) is not None
+            assert store.resolve_session(elsewhere) is None
+
+    def test_admin_override_still_ends_every_session(self):
+        """Test an administrator reset signs the account out completely."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._store(tmpdir)
+            user = store.create_user(
+                "a@example.com", "unit-test-password-1", UserRole.VIEWER
+            )
+            token = store.create_session(user.user_id)
+
+            store.change_password(user.user_id, "brand-new-pass-9")
+
+            assert store.resolve_session(token) is None
