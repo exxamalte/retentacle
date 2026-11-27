@@ -1,6 +1,6 @@
 # Changes
 
-## 2026.11.1
+## 2026.11.1 (27/11/2026)
 * Added an mDNS self-check to the Settings page: a quiet hint when devices sit behind a router (discovery only — backups still work by IP), an alert when a device has no route at all, and a "Check discovery" button that listens for real answers.
 * The OIDC settings panel now shows the exact redirect URI being sent, and the server log records it, so provider mismatches are visible at a glance.
 * Self-service password change from the account menu, requiring the current password, a new password and a confirmation; other people's passwords are set by admins with "Set password".
@@ -9,7 +9,7 @@
 * Lock the only administrator account in the users table: no role dropdown is offered, and the reason is stated instead of failing after submit.
 * Reworded the update badge to "Update available: vX.Y.Z" and stopped the version prefix from being doubled.
 
-## 2026.11.0
+## 2026.11.0 (24/11/2026)
 * Split the documentation into topic pages under `docs/` and show the web UI in the README with screenshots of the overview and the device history.
 * Present backups in restore-oriented zones: restorable configuration, masked settings summary, and clearly separated live state.
 * Offer a ready-to-run manual restore command and a dedicated `restore.json` download per backup.
