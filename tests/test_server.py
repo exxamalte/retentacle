@@ -4814,3 +4814,70 @@ class TestUsersTablePasswordColumn:
         assert "cannot delete the account you are signed in with" in own
         assert "Delete" in other
         assert 'action="/settings/users/' in other
+
+
+class TestOIDCDiagnostics:
+    """Tests for making OIDC setup problems visible where they are fixed."""
+
+    def test_settings_show_the_derived_redirect_uri(self):
+        """Test the page states the URI that must be registered at the provider."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with _client(app) as client:
+                page = client.get("/settings").text
+            block = page[page.find("oidc-redirect-preview") :]
+
+        assert "http://testserver/oidc/callback" in block
+        assert "FORWARDED_ALLOW_IPS" in block
+
+    def test_settings_show_the_configured_redirect_uri(self):
+        """Test an explicit callback URL is echoed instead of a guess."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, callback_url="https://backup.example.com/oidc/callback")
+            with _client(app) as client:
+                page = client.get("/settings").text
+            block = page[page.find("oidc-redirect-preview") :]
+
+        assert "https://backup.example.com/oidc/callback" in block
+        assert "FORWARDED_ALLOW_IPS" not in block
+
+    def test_login_start_logs_the_redirect_uri(self, caplog):
+        """Test the server log records the URI the provider will compare."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, callback_url="https://backup.example.com/oidc/callback")
+            with (
+                patch(
+                    "retentacle.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                caplog.at_level("INFO", logger="retentacle.auth"),
+                TestClient(app) as client,
+            ):
+                client.get("/oidc/login", follow_redirects=False)
+
+        assert "redirect_uri=https://backup.example.com/oidc/callback" in caplog.text
+
+    def test_discovery_failure_names_the_issuer_and_the_cause(self, caplog):
+        """Test an unreachable provider explains the server-side requirement."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "retentacle.auth.discover_endpoints",
+                    side_effect=OIDCError(
+                        "Unable to reach the OIDC discovery document: connect error"
+                    ),
+                ),
+                caplog.at_level("WARNING", logger="retentacle.auth"),
+                TestClient(app) as client,
+            ):
+                response = client.get("/oidc/login", follow_redirects=False)
+
+        assert response.status_code == 400
+        assert "https://id.example.com" in response.text
+        assert "must be able to reach" in response.text
+        assert "OIDC discovery failed for https://id.example.com" in caplog.text

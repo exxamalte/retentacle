@@ -318,14 +318,25 @@ async def _oidc_start_login(
     try:
         endpoints = await asyncio.to_thread(discover_endpoints, config.issuer)
     except OIDCError as exc:
-        _LOGGER.warning("OIDC discovery failed: %s", exc)
-        return _render_login(request, store, error=str(exc), status_code=400)
+        _LOGGER.warning("OIDC discovery failed for %s: %s", config.issuer, exc)
+        return _render_login(
+            request,
+            store,
+            error=(
+                f"{exc} The Retentacle server itself must be able to reach"
+                f" {config.issuer} — check its network, DNS and TLS trust."
+            ),
+            status_code=400,
+        )
     now = time.monotonic()
     for key in [key for key, (expires, _) in pending_states.items() if expires <= now]:
         pending_states.pop(key, None)
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
     redirect_uri = _oidc_redirect_uri(request, config)
+    # Logged because a mismatch between this URI and the one registered at the
+    # provider is the most common reason the provider rejects the sign-in.
+    _LOGGER.info("Starting OIDC sign-in with redirect_uri=%s", redirect_uri)
     pending_states[state] = (now + _OIDC_STATE_TTL, redirect_uri)
     url = authorization_url(config, endpoints, redirect_uri, state, nonce)
     return RedirectResponse(url=url, status_code=302)

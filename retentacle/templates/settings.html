@@ -518,6 +518,16 @@
           to derive it from the current request — useful when running behind
           a reverse proxy with a different scheme or host.
         </p>
+        <p class="field-help oidc-redirect-preview">
+          Sent as <code>redirect_uri</code> right now:
+          <span class="mono" data-oidc-redirect-uri>{% if oidc.callback_url %}{{ oidc.callback_url }}{% else %}{{ request.base_url }}oidc/callback{% endif %}</span>
+          — it has to match the value in your provider exactly.
+          {% if not oidc.callback_url %}
+            If this shows an internal host name or <code>http://</code> while
+            you open the app through a proxy, trust the proxy with
+            <code>FORWARDED_ALLOW_IPS</code> or fill in the field above.
+          {% endif %}
+        </p>
       </div>
 
       <div class="form-field toggle-field">

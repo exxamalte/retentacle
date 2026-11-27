@@ -1,6 +1,7 @@
 # Changes
 
 ## 2026.11.1
+* The OIDC settings panel now shows the exact redirect URI being sent, and the server log records it, so provider mismatches are visible at a glance.
 * Self-service password change from the account menu, requiring the current password, a new password and a confirmation; other people's passwords are set by admins with "Set password".
 * Password controls are hidden for accounts without a local password, which sign in through the identity provider; admins can still give them their first password.
 * The users table explains blocked deletions with a badge ("Signed in", "Only admin") instead of a silently disabled button.
