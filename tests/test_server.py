@@ -4819,6 +4819,12 @@ class TestUsersTablePasswordColumn:
 class TestOIDCDiagnostics:
     """Tests for making OIDC setup problems visible where they are fixed."""
 
+    def _preview(self, page):
+        """Return the redirect URI the settings page advertises."""
+        match = re.search(r"data-oidc-redirect-uri>([^<]+)<", page.replace("\n", " "))
+        assert match is not None
+        return match.group(1).strip()
+
     def test_settings_show_the_derived_redirect_uri(self):
         """Test the page states the URI that must be registered at the provider."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4828,7 +4834,7 @@ class TestOIDCDiagnostics:
                 page = client.get("/settings").text
             block = page[page.find("oidc-redirect-preview") :]
 
-        assert "http://testserver/oidc/callback" in block
+        assert self._preview(page) == "http://testserver/oidc/callback"
         assert "FORWARDED_ALLOW_IPS" in block
 
     def test_settings_show_the_configured_redirect_uri(self):
@@ -4840,7 +4846,7 @@ class TestOIDCDiagnostics:
                 page = client.get("/settings").text
             block = page[page.find("oidc-redirect-preview") :]
 
-        assert "https://backup.example.com/oidc/callback" in block
+        assert self._preview(page) == "https://backup.example.com/oidc/callback"
         assert "FORWARDED_ALLOW_IPS" not in block
 
     def test_login_start_logs_the_redirect_uri(self, caplog):
@@ -4878,9 +4884,15 @@ class TestOIDCDiagnostics:
                 response = client.get("/oidc/login", follow_redirects=False)
 
         assert response.status_code == 400
-        assert "https://id.example.com" in response.text
-        assert "must be able to reach" in response.text
-        assert "OIDC discovery failed for https://id.example.com" in caplog.text
+        # Matched by phrase, not by URL substring containment: the URL may
+        # legitimately appear anywhere in the page, so `in` proves nothing.
+        assert re.search(
+            r"must be able to reach https://id\.example\.com —", response.text
+        )
+        assert "OIDC discovery failed for" in caplog.text
+        assert re.search(
+            r"OIDC discovery failed for https://id\.example\.com", caplog.text
+        )
 
 
 class TestDiscoveryNetworkCheck:

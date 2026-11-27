@@ -138,21 +138,22 @@ devices' LAN, the Settings page checks the network on its own terms:
   address, so this is about discovery only. A real alert appears only when a
   device has *no route at all*, which does affect backups too. Nothing is sent:
   the check only consults the routing table.
-* **Active.** **Check discovery** sends a real mDNS query for
-  `_shelly._tcp.local` and `_http._tcp.local`, then listens for three seconds
-  and reports one of four outcomes:
+* **Active.** **Check discovery** runs the same zeroconf queries a real scan
+  uses — for `_shelly._tcp.local` and `_http._tcp.local` — listens for three
+  seconds, and reports one of four outcomes:
 
   | Result | Meaning |
   | --- | --- |
-  | `mDNS works: N Shelly answer(s)` | Discovery will find devices. |
-  | `mDNS traffic is visible … but no Shelly device answered` | The segment is right; the devices are off, sleeping, or on another VLAN. |
-  | `No mDNS traffic at all` | This network cannot see the devices' segment — use `network_mode: host` or a macvlan on it. |
-  | `Multicast queries could not be sent` / `Cannot listen on UDP port 5353` | No multicast route, or another responder holds the port; devices may still be reachable by IP. |
+  | `Auto-discovery works here: N Shelly service(s) answered` | The scan will find devices. |
+  | `mDNS is audible (N record(s) seen), but no Shelly device answered` | The segment is right; the devices are off, sleeping, or on another VLAN. |
+  | `No mDNS traffic at all.` | mDNS is not audible from this network, so auto-discovery will find nothing — use `network_mode: host` or a macvlan in the devices' segment. |
+  | `mDNS sockets could not be opened (…)` | The network stack refused the listener; devices added by IP address still work. |
 
   The same check is available on the command line inside a container:
 
   ```commandline
-  docker exec retentacle python -c     "from retentacle.discovery import check_mdns; print(check_mdns(['192.168.1.50']).message)"
+  docker exec retentacle python -c \
+    "from retentacle.discovery import check_mdns; print(check_mdns(['192.168.1.50']).message)"
   ```
 
 

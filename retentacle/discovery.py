@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import ipaddress
 import logging
 import socket
-import struct
 import sys
 import time
 
@@ -16,8 +15,6 @@ from .consts import SHELLY_HTTP_MDNS_SERVICE_TYPE, SHELLY_MDNS_SERVICE_TYPE
 
 _LOGGER = logging.getLogger(__name__)
 
-MDNS_GROUP = "224.0.0.251"
-MDNS_PORT = 5353
 MDNS_CHECK_SECONDS = 3.0
 
 # mDNS state labels reported by the self-check.
@@ -25,15 +22,6 @@ MDNS_WORKING = "working"
 MDNS_NO_SHELLY = "no-shelly"
 MDNS_SILENT = "silent"
 MDNS_UNAVAILABLE = "unavailable"
-
-
-def _query_packet(name: str) -> bytes:
-    """Build a minimal DNS PTR query for an mDNS service name."""
-    header = struct.pack(">HHHHHH", 0, 0x0100, 1, 0, 0, 0)
-    labels = b"".join(
-        bytes([len(part)]) + part.encode("ascii") for part in name.strip(".").split(".")
-    )
-    return header + labels + b"\x00" + struct.pack(">HH", 12, 1)
 
 
 def local_source_for(target: str) -> str | None:
@@ -118,109 +106,55 @@ class MDNSCheck:
         }
 
 
-def _open_mdns_listener() -> tuple[socket.socket | None, str | None]:
-    """Bind a reusable UDP listener on the mDNS port."""
-    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        if hasattr(socket, "SO_REUSEPORT"):
-            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        listener.bind(("", MDNS_PORT))
-    except OSError as exc:
-        listener.close()
-        return None, str(exc)
-    # Joining with INADDR_ANY covers every interface on Linux.
-    with contextlib.suppress(OSError):
-        listener.setsockopt(
-            socket.IPPROTO_IP,
-            socket.IP_ADD_MEMBERSHIP,
-            socket.inet_aton(MDNS_GROUP) + socket.inet_aton("0.0.0.0"),
-        )
-    with contextlib.suppress(OSError):
-        listener.setsockopt(
-            socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack("B", 2)
-        )
-    return listener, None
+def _local_sources(device_ips: Iterable[str]) -> list[str]:
+    """Return the local addresses this host would send mDNS queries from."""
+    sources: list[str] = []
+    for candidate in ("8.8.8.8", *device_ips):
+        source = local_source_for(str(candidate))
+        if source and source not in sources:
+            sources.append(source)
+    return sources
 
 
-def _send_queries(
-    listener: socket.socket, sources: list[str]
-) -> tuple[int, str | None]:
-    """Send Shelly mDNS queries out of every candidate interface."""
-    queries = [
-        _query_packet(SHELLY_MDNS_SERVICE_TYPE),
-        _query_packet(SHELLY_HTTP_MDNS_SERVICE_TYPE),
-    ]
-    sent = 0
-    last_error: str | None = None
-    for source in sources:
-        with contextlib.suppress(OSError):
-            listener.setsockopt(
-                socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(source)
-            )
-        for query in queries:
-            try:
-                listener.sendto(query, (MDNS_GROUP, MDNS_PORT))
-                sent += 1
-            except OSError as exc:
-                last_error = str(exc)
-    return sent, last_error
-
-
-def _collect_answers(
-    listener: socket.socket, timeout: float
-) -> tuple[int, int, set[str]]:
-    """Count mDNS packets, Shelly answers and their senders in a time window."""
-    listener.settimeout(0.3)
-    packets = 0
-    shelly_answers = 0
-    senders: set[str] = set()
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            data, peer = listener.recvfrom(65535)
-        except TimeoutError:
-            continue
-        except OSError:
-            break
-        packets += 1
-        senders.add(str(peer[0]))
-        if b"shelly" in data.lower():
-            shelly_answers += 1
-    return packets, shelly_answers, senders
+def _cached_record_count(zc: Zeroconf) -> int:
+    """Return how many mDNS records the cache holds right now."""
+    return sum(len(records) for records in zc.cache.cache.values())
 
 
 def _mdns_verdict(
-    packets: int,
+    records: int,
     shelly_answers: int,
-    senders: set[str],
     sources: list[str],
     device_ips: Iterable[str],
 ) -> MDNSCheck:
-    """Describe what the collected answers mean for discovery."""
+    """Describe what the observed traffic means for auto-discovery."""
+    macos_hint = (
+        " On macOS, allow Local Network access for the terminal or service"
+        " running Retentacle (System Settings → Privacy & Security)."
+        if sys.platform == "darwin"
+        else ""
+    )
     if shelly_answers:
         return MDNSCheck(
             state=MDNS_WORKING,
             message=(
-                f"mDNS works: {shelly_answers} Shelly answer(s) from "
-                f"{len(senders)} host(s)."
+                f"Auto-discovery works here: {shelly_answers} Shelly service(s) "
+                f"answered within the last seconds."
             ),
-            packets=packets,
+            packets=records,
             shelly_answers=shelly_answers,
             sources=tuple(sources),
-            senders=tuple(sorted(senders)),
         )
-    if packets:
+    if records:
         return MDNSCheck(
             state=MDNS_NO_SHELLY,
             message=(
-                f"mDNS traffic is visible ({packets} packets from "
-                f"{len(senders)} host(s)), but no Shelly device answered. They "
-                "may be switched off, on another VLAN, or sleeping."
+                f"mDNS is audible ({records} record(s) seen), but no Shelly "
+                "device answered. They may be switched off, on another VLAN, or "
+                "sleeping; devices added by IP address still work normally."
             ),
-            packets=packets,
+            packets=records,
             sources=tuple(sources),
-            senders=tuple(sorted(senders)),
         )
     off_segment = segment_report(device_ips)["off_segment"]
     detail = (
@@ -231,11 +165,12 @@ def _mdns_verdict(
     return MDNSCheck(
         state=MDNS_SILENT,
         message=(
-            f"No mDNS traffic at all.{detail} Run the container with "
-            "`network_mode: host` or on a macvlan attached to the devices' "
-            "segment — discovery cannot cross a router."
+            f"No mDNS traffic at all.{detail} Auto-discovery will find nothing "
+            "from this network, although devices added by IP address keep working"
+            f" — run the container with `network_mode: host` or on a macvlan in "
+            f"the devices' segment, since mDNS does not cross routers.{macos_hint}"
         ),
-        packets=packets,
+        packets=records,
         sources=tuple(sources),
     )
 
@@ -243,56 +178,50 @@ def _mdns_verdict(
 def check_mdns(
     device_ips: Iterable[str] = (), timeout: float = MDNS_CHECK_SECONDS
 ) -> MDNSCheck:
-    """Send an mDNS query and report what came back.
+    """Report whether mDNS auto-discovery can work from this network.
 
-    Listening for a couple of seconds distinguishes the three failures that
-    users otherwise cannot tell apart: no network for multicast at all, a
-    segment where mDNS works but no Shelly answers, and a healthy setup.
+    Uses zeroconf rather than a hand-rolled listener, so the sockets, interfaces
+    and multicast membership are exactly the ones a real discovery run would
+    use. Listening for a moment distinguishes the cases a user cannot tell
+    apart: no mDNS audible at all, mDNS audible but no Shelly answering, and a
+    working segment.
     """
-    sources: list[str] = []
-    for candidate in ("8.8.8.8", *device_ips):
-        source = local_source_for(str(candidate))
-        if source and source not in sources:
-            sources.append(source)
-
-    platform_hint = (
-        " On macOS, allow Local Network access for the terminal or service"
-        " running Retentacle (System Settings → Privacy & Security)."
-        if sys.platform == "darwin"
-        else ""
-    )
-    listener, bind_error = _open_mdns_listener()
-    if listener is None:
+    sources = _local_sources(device_ips)
+    try:
+        zc = Zeroconf()
+    except OSError as exc:
         return MDNSCheck(
             state=MDNS_UNAVAILABLE,
             message=(
-                f"Cannot listen on UDP port {MDNS_PORT} ({bind_error}), so "
-                "auto-discovery cannot report anything from here. Another mDNS "
-                "responder holds the port; the devices themselves are likely "
-                "still reachable by IP address."
+                f"mDNS sockets could not be opened ({exc}), so auto-discovery "
+                "cannot run here."
             ),
-            error=bind_error,
+            error=str(exc),
             sources=tuple(sources),
         )
 
+    listener = ShellyServiceListener(zc)
+    browsers: list[ServiceBrowser] = []
     try:
-        sent, send_error = _send_queries(listener, sources)
-        if not sent:
-            return MDNSCheck(
-                state=MDNS_UNAVAILABLE,
-                message=(
-                    f"Multicast queries could not be sent ({send_error}). This "
-                    "network has no route for mDNS, so the devices' segment is "
-                    f"not reachable from here.{platform_hint}"
-                ),
-                error=send_error,
-                sources=tuple(sources),
+        browsers = [
+            ServiceBrowser(zc, service_type, listener)
+            for service_type in (
+                SHELLY_MDNS_SERVICE_TYPE,
+                SHELLY_HTTP_MDNS_SERVICE_TYPE,
             )
-        packets, shelly_answers, senders = _collect_answers(listener, timeout)
+        ]
+        before = _cached_record_count(zc)
+        time.sleep(timeout)
+        records = _cached_record_count(zc) - before
+        shelly_answers = sum(1 for device in listener.devices if device.ip_address)
     finally:
-        listener.close()
+        for browser in browsers:
+            with contextlib.suppress(OSError, RuntimeError):
+                browser.cancel()
+        with contextlib.suppress(OSError, RuntimeError):
+            zc.close()
 
-    return _mdns_verdict(packets, shelly_answers, senders, sources, device_ips)
+    return _mdns_verdict(records, shelly_answers, sources, device_ips)
 
 
 @dataclass(frozen=True)
