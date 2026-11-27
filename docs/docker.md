@@ -111,7 +111,11 @@ mDNS discovery needs direct access to the network where the Shelly devices are
 located, or an mDNS proxy needs to be configured. Run the container with
 `network_mode: host` (see the commented lines in the compose file) or attach it
 to a `macvlan` network on that segment. Otherwise configure device IP addresses
-in the web UI, which works with plain port mappings.
+in the web UI, which works with plain port mappings. The Settings page flags
+this situation on its own: it warns when a device would be reached through a
+router, and its **Check discovery** button reports whether mDNS traffic is
+audible at all — see
+[Configuration](configuration.md#does-discovery-have-a-chance-here).
 
 ## One-shot backups
 

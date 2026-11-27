@@ -18,7 +18,7 @@ import pytest
 from retentacle import updates
 from retentacle.configuration import Configuration
 from retentacle.consts import SETTINGS_FILENAME
-from retentacle.discovery import DiscoveredDevice
+from retentacle.discovery import MDNS_SILENT, DiscoveredDevice, MDNSCheck
 from retentacle.oidc import OIDCError
 from retentacle.server import (
     _describe_mount,
@@ -4814,3 +4814,238 @@ class TestUsersTablePasswordColumn:
         assert "cannot delete the account you are signed in with" in own
         assert "Delete" in other
         assert 'action="/settings/users/' in other
+
+
+class TestOIDCDiagnostics:
+    """Tests for making OIDC setup problems visible where they are fixed."""
+
+    def _preview(self, page):
+        """Return the redirect URI the settings page advertises."""
+        match = re.search(r"data-oidc-redirect-uri>([^<]+)<", page.replace("\n", " "))
+        assert match is not None
+        return match.group(1).strip()
+
+    def test_settings_show_the_derived_redirect_uri(self):
+        """Test the page states the URI that must be registered at the provider."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with _client(app) as client:
+                page = client.get("/settings").text
+            block = page[page.find("oidc-redirect-preview") :]
+
+        assert self._preview(page) == "http://testserver/oidc/callback"
+        assert "FORWARDED_ALLOW_IPS" in block
+
+    def test_settings_show_the_configured_redirect_uri(self):
+        """Test an explicit callback URL is echoed instead of a guess."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, callback_url="https://backup.example.com/oidc/callback")
+            with _client(app) as client:
+                page = client.get("/settings").text
+            block = page[page.find("oidc-redirect-preview") :]
+
+        assert self._preview(page) == "https://backup.example.com/oidc/callback"
+        assert "FORWARDED_ALLOW_IPS" not in block
+
+    def test_login_start_logs_the_redirect_uri(self, caplog):
+        """Test the server log records the URI the provider will compare."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store, callback_url="https://backup.example.com/oidc/callback")
+            with (
+                patch(
+                    "retentacle.auth.discover_endpoints",
+                    return_value=dict(_OIDC_ENDPOINTS),
+                ),
+                caplog.at_level("INFO", logger="retentacle.auth"),
+                TestClient(app) as client,
+            ):
+                client.get("/oidc/login", follow_redirects=False)
+
+        assert "redirect_uri=https://backup.example.com/oidc/callback" in caplog.text
+
+    def test_discovery_failure_names_the_issuer_and_the_cause(self, caplog):
+        """Test an unreachable provider explains the server-side requirement."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            _seed_oidc(store)
+            with (
+                patch(
+                    "retentacle.auth.discover_endpoints",
+                    side_effect=OIDCError(
+                        "Unable to reach the OIDC discovery document: connect error"
+                    ),
+                ),
+                caplog.at_level("WARNING", logger="retentacle.auth"),
+                TestClient(app) as client,
+            ):
+                response = client.get("/oidc/login", follow_redirects=False)
+
+        assert response.status_code == 400
+        # Matched by phrase, not by URL substring containment: the URL may
+        # legitimately appear anywhere in the page, so `in` proves nothing.
+        assert re.search(
+            r"must be able to reach https://id\.example\.com —", response.text
+        )
+        assert "OIDC discovery failed for" in caplog.text
+        assert re.search(
+            r"OIDC discovery failed for https://id\.example\.com", caplog.text
+        )
+
+
+class TestDiscoveryNetworkCheck:
+    """Tests for the mDNS reachability affordances on the settings page."""
+
+    def _check(self):
+        return MDNSCheck(
+            state=MDNS_SILENT,
+            message=(
+                "No mDNS traffic at all. Run the container with "
+                "`network_mode: host` or on a macvlan."
+            ),
+            sources=("172.18.0.5",),
+        )
+
+    def test_check_endpoint_returns_the_verdict(self):
+        """Test the button has a JSON endpoint to ask."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["10.10.4.128"]})
+            with (
+                patch("retentacle.server.check_mdns", return_value=self._check()),
+                _client(app) as client,
+            ):
+                response = client.post("/settings/discover/check")
+
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["usable"] is False
+            assert "macvlan" in payload["message"]
+
+    def test_check_endpoint_uses_the_configured_devices(self):
+        """Test the probe knows which segment to comment on."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["10.10.4.128", "10.10.4.9"]})
+            probe = Mock(return_value=self._check())
+            with (
+                patch("retentacle.server.check_mdns", probe),
+                _client(app) as client,
+            ):
+                client.post("/settings/discover/check")
+
+        assert probe.call_args.args[0] == ("10.10.4.9", "10.10.4.128")
+
+    def test_check_endpoint_is_admin_only(self):
+        """Test read-only accounts cannot run the probe."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            app.state.users.create_user(
+                "guest@example.com", "viewer-password-1", UserRole.VIEWER
+            )
+            with TestClient(app) as client:
+                client.post(
+                    "/login",
+                    data={
+                        "email": "guest@example.com",
+                        "password": "viewer-password-1",
+                    },
+                )
+                response = client.post("/settings/discover/check")
+
+        assert response.status_code == 403
+
+    def test_settings_warn_when_devices_are_off_segment(self):
+        """Test the passive check is visible without pressing anything."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["10.10.4.128"]})
+            report = {
+                "sources": ["172.18.0.5"],
+                "unroutable": [],
+                "off_segment": ["10.10.4.128"],
+            }
+            with (
+                patch("retentacle.server.segment_report", return_value=report),
+                _client(app) as client,
+            ):
+                page = client.get("/settings").text
+
+        assert 'class="field-help mdns-hint"' in page
+        assert "Auto-discovery may come up empty here." in page
+        assert "10.10.4.128" in page
+        assert "Check discovery" in page
+        # A routed path is not a reachability alarm.
+        assert 'class="alert mdns-warning"' not in page
+
+    def test_settings_stay_quiet_when_the_segment_is_right(self):
+        """Test a healthy deployment shows no alarming text."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, store = _create_app(tmpdir)
+            store.save_settings({"ip_addresses": ["10.10.4.128"]})
+            report = {"sources": ["10.10.4.30"], "unroutable": [], "off_segment": []}
+            with (
+                patch("retentacle.server.segment_report", return_value=report),
+                _client(app) as client,
+            ):
+                page = client.get("/settings").text
+
+        assert 'class="alert mdns-warning"' not in page
+
+    def test_settings_offer_the_check_button(self):
+        """Test the active probe is reachable from the discovery controls."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app, _ = _create_app(tmpdir)
+            with _client(app) as client:
+                page = client.get("/settings").text
+
+        assert "data-mdns-check" in page
+        assert "Check discovery" in page
+        assert "/settings/discover/check" in page
+
+
+class TestDiscoveryHintTone:
+    """Tests that only a real reachability problem is raised as an alert."""
+
+    def _page(self, tmpdir, report):
+        app, store = _create_app(tmpdir)
+        store.save_settings({"ip_addresses": ["10.10.4.128"]})
+        with (
+            patch("retentacle.server.segment_report", return_value=report),
+            _client(app) as client,
+        ):
+            return client.get("/settings").text
+
+    def test_routed_path_is_a_quiet_hint(self):
+        """Test devices behind a router are not reported as unreachable."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            page = self._page(
+                tmpdir,
+                {
+                    "sources": ["172.18.0.5"],
+                    "unroutable": [],
+                    "off_segment": ["10.10.4.128"],
+                },
+            )
+
+        assert 'class="field-help mdns-hint"' in page
+        assert 'class="alert mdns-warning"' not in page
+        assert "Backups and the device web UIs work as usual by IP address" in page
+
+    def test_missing_route_is_an_alert(self):
+        """Test a device with no route at all is still worth an alarm."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            page = self._page(
+                tmpdir,
+                {
+                    "sources": [],
+                    "unroutable": ["10.10.4.128"],
+                    "off_segment": [],
+                },
+            )
+
+        assert 'class="alert mdns-warning"' in page
+        assert "No route to these devices" in page
+        assert 'class="field-help mdns-hint"' not in page

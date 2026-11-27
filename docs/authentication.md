@@ -97,6 +97,33 @@ sign in through an external identity provider:
   calls with the just-exchanged access token; unverified email claims are
   refused.
 
+### When the sign-in button fails
+
+The **Sign in with …** button starts a redirect, so a failure can come from
+either side. Open the browser's network tab and look at which request answered
+with the error:
+
+* **`/oidc/login` itself returns 400** and the login page reappears with a red
+  notice — that is Retentacle refusing to start: either OIDC is not fully
+  configured, or the server could not fetch
+  `<issuer>/.well-known/openid-configuration`. The app *container* must be able
+  to reach the issuer URL, so an internal DNS name, a missing network, or a TLS
+  certificate the container does not trust all surface here. The Settings page
+  shows the exact URI being sent, and the server log records it as
+  `Starting OIDC sign-in with redirect_uri=…`.
+* **The provider's `/authorize` page returns 400** — the redirect URI, client ID
+  or scopes do not match what is registered. Compare the `redirect_uri` value in
+  the failed URL against the client's configured callback URL; they must be
+  identical, including scheme, port and trailing slash.
+* **`/oidc/callback` returns 400** — the login attempt expired (states are valid
+  for 5 minutes), the provider reported an error, or the code exchange failed.
+
+Behind a reverse proxy, the redirect URI derived from the request is only correct
+when the proxy's headers are trusted: set `FORWARDED_ALLOW_IPS` to the proxy
+address, its Docker network CIDR, or `*`, or fill in the **Callback URL** field
+with the exact public value. See
+[Docker deployment](docker.md#reverse-proxy).
+
 ### Where the secret lives, and how to get back in
 
 Note that the OIDC **client secret is stored in the settings database**

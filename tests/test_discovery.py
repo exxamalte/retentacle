@@ -6,13 +6,20 @@ from unittest.mock import Mock, call, patch
 import pytest
 
 from retentacle import consts
+from retentacle.consts import SHELLY_HTTP_MDNS_SERVICE_TYPE, SHELLY_MDNS_SERVICE_TYPE
 from retentacle.discovery import (
+    MDNS_NO_SHELLY,
+    MDNS_SILENT,
+    MDNS_UNAVAILABLE,
+    MDNS_WORKING,
     DiscoveredDevice,
     ShellyServiceListener,
     _collect_from_browser,
+    check_mdns,
     discover_shelly_device_details,
     discover_shelly_devices,
     iter_shelly_device_details,
+    segment_report,
 )
 
 
@@ -596,3 +603,207 @@ class TestDiscoverShellyDevices:
         result = discover_shelly_devices(timeout=0)
 
         assert result == []
+
+
+class TestSegmentReport:
+    """Tests for the passive network-segment assessment."""
+
+    def test_devices_reachable_only_through_a_router_are_flagged(self):
+        """Test mDNS cannot cross the gateway, so those devices stay hidden."""
+        with patch(
+            "retentacle.discovery.local_source_for",
+            side_effect=lambda target: "172.18.0.5",
+        ):
+            report = segment_report(["10.10.4.128"])
+
+        assert report["sources"] == ["172.18.0.5"]
+        assert report["off_segment"] == ["10.10.4.128"]
+        assert report["unroutable"] == []
+
+    def test_devices_on_a_local_subnet_are_not_flagged(self):
+        """Test same-segment devices produce no warning."""
+        with patch(
+            "retentacle.discovery.local_source_for",
+            side_effect=lambda target: "10.10.4.30",
+        ):
+            report = segment_report(["10.10.4.128", "10.10.4.9"])
+
+        assert report["off_segment"] == []
+
+    def test_unroutable_devices_are_reported_separately(self):
+        """Test a missing route is distinguished from a routed path."""
+        with patch("retentacle.discovery.local_source_for", return_value=None):
+            report = segment_report(["192.168.9.9"])
+
+        assert report["unroutable"] == [
+            "10.10.4.128".replace("10.10.4.128", "192.168.9.9")
+        ]
+        assert report["off_segment"] == []
+
+    def test_invalid_and_ipv6_addresses_are_skipped(self):
+        """Test junk and IPv6 devices never produce a false warning."""
+        with patch("retentacle.discovery.local_source_for", return_value=None):
+            report = segment_report(["not-an-ip", "2001:db8::5"])
+
+        assert report == {"sources": [], "unroutable": [], "off_segment": []}
+
+
+class TestCheckMDNS:
+    """Tests for the active mDNS reachability check."""
+
+    def setup_method(self):
+        """Create the zeroconf doubles shared by the cases."""
+        self.zc = Mock()
+        self.zc_factory = Mock(return_value=self.zc)
+        self.listener = Mock()
+        self.listener.devices = []
+        self.browser = Mock()
+        self.browser_factory = Mock(return_value=self.browser)
+
+    def _patches(self, *, records=0, shelly=0, socket_error=None, off_segment=()):
+        if socket_error is not None:
+            self.zc_factory = Mock(side_effect=OSError(socket_error))
+        self.listener.devices = [
+            DiscoveredDevice(f"10.10.4.{120 + index}") for index in range(shelly)
+        ]
+        return [
+            patch("retentacle.discovery.local_source_for", return_value="172.18.0.5"),
+            patch("retentacle.discovery.Zeroconf", self.zc_factory),
+            patch(
+                "retentacle.discovery.ShellyServiceListener", return_value=self.listener
+            ),
+            patch("retentacle.discovery.ServiceBrowser", self.browser_factory),
+            patch(
+                "retentacle.discovery._cached_record_count", side_effect=[0, records]
+            ),
+            patch("retentacle.discovery.time.sleep"),
+            patch(
+                "retentacle.discovery.segment_report",
+                return_value={
+                    "sources": ["172.18.0.5"],
+                    "unroutable": [],
+                    "off_segment": list(off_segment),
+                },
+            ),
+        ]
+
+    def _run(self, patches, devices=()):
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+        ):
+            return check_mdns(devices, timeout=0)
+
+    def test_shelly_answers_mean_discovery_works(self):
+        """Test a reply from a Shelly service is reported as usable."""
+        check = self._run(self._patches(records=12, shelly=2), ["10.10.4.128"])
+
+        assert check.state == MDNS_WORKING
+        assert check.usable is True
+        assert "Auto-discovery works here" in check.message
+        assert check.shelly_answers == 2
+
+    def test_it_browses_both_shelly_service_types(self):
+        """Test Gen 1 and Gen 2/3 announcements are both queried."""
+        self._run(self._patches(shelly=1))
+
+        types = [call.args[1] for call in self.browser_factory.call_args_list]
+        assert SHELLY_MDNS_SERVICE_TYPE in types
+        assert SHELLY_HTTP_MDNS_SERVICE_TYPE in types
+
+    def test_traffic_without_shelly_answers_is_not_called_broken(self):
+        """Test an audible segment without replies keeps devices usable."""
+        check = self._run(self._patches(records=17))
+
+        assert check.state == MDNS_NO_SHELLY
+        assert check.usable is True
+        assert "mDNS is audible" in check.message
+        assert "still work normally" in check.message
+
+    def test_silence_is_about_discovery_not_the_devices(self):
+        """Test the wording keeps backups out of the message."""
+        check = self._run(
+            self._patches(records=0, off_segment=["10.10.4.128"]), ["10.10.4.128"]
+        )
+        message = check.message
+
+        assert check.state == MDNS_SILENT
+        assert check.usable is False
+        assert message.startswith("No mDNS traffic at all. ")
+        assert "at all No" not in message
+        assert "would be reached through a router." in message
+        assert "Auto-discovery will find nothing" in message
+        assert "devices added by IP address keep working" in message
+        assert "macvlan" in message
+
+    def test_socket_failure_is_unavailable(self):
+        """Test a network that cannot open mDNS sockets is named."""
+        check = self._run(self._patches(socket_error="Permission denied"))
+
+        assert check.state == MDNS_UNAVAILABLE
+        assert "mDNS sockets could not be opened" in check.message
+        assert check.error == "Permission denied"
+        self.zc.close.assert_not_called()
+
+    def test_resources_are_released_after_an_error(self):
+        """Test browsers and the zeroconf instance are closed even on failure."""
+        patches = self._patches()
+        patches[4] = patch(
+            "retentacle.discovery._cached_record_count",
+            side_effect=RuntimeError("boom"),
+        )
+        with pytest.raises(RuntimeError):
+            self._run(patches)
+
+        assert self.browser.cancel.call_count == 2
+        self.zc.close.assert_called_once()
+
+    def test_serialises_for_the_browser(self):
+        """Test the web endpoint payload carries the fields the UI reads."""
+        payload = self._run(self._patches(records=9, shelly=3)).as_dict()
+
+        assert payload["state"] == MDNS_WORKING
+        assert payload["usable"] is True
+        assert payload["shelly_answers"] == 3
+        assert payload["sources"] == ["172.18.0.5"]
+
+
+class TestMDNSPlatformHint:
+    """Tests for platform specific advice in the reachability check."""
+
+    def _silent(self, platform):
+        with (
+            patch("retentacle.discovery.local_source_for", return_value="10.0.0.5"),
+            patch("retentacle.discovery.Zeroconf", Mock()),
+            patch(
+                "retentacle.discovery.ShellyServiceListener",
+                return_value=Mock(devices=[]),
+            ),
+            patch("retentacle.discovery.ServiceBrowser", return_value=Mock()),
+            patch("retentacle.discovery._cached_record_count", side_effect=[0, 0]),
+            patch("retentacle.discovery.time.sleep"),
+            patch(
+                "retentacle.discovery.segment_report",
+                return_value={"sources": [], "unroutable": [], "off_segment": []},
+            ),
+            patch("retentacle.discovery.sys.platform", platform),
+        ):
+            return check_mdns([], timeout=0)
+
+    def test_macos_advises_local_network_permission(self):
+        """Test silence on macOS mentions the privacy gate, not only the network."""
+        check = self._silent("darwin")
+
+        assert check.state == MDNS_SILENT
+        assert "Local Network" in check.message
+
+    def test_linux_omits_the_macos_hint(self):
+        """Test container users are not told about a missing permission."""
+        check = self._silent("linux")
+
+        assert "Local Network" not in check.message

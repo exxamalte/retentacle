@@ -523,6 +523,40 @@
       margin-top: 0.5rem;
     }
 
+    .mdns-check-result {
+      border-left: 3px solid var(--border);
+      padding-left: 0.6rem;
+      margin-top: 0.25rem;
+    }
+
+    .mdns-check-result.ok {
+      border-left-color: var(--success);
+      color: var(--success);
+    }
+
+    .mdns-check-result.bad {
+      border-left-color: var(--warning);
+      color: var(--warning);
+    }
+
+    .mdns-hint {
+      border-left: 3px solid var(--border);
+      padding-left: 0.6rem;
+      margin-top: 0.25rem;
+    }
+
+    .mdns-hint strong {
+      color: var(--text);
+    }
+
+    .mdns-warning {
+      border-left: 3px solid var(--warning);
+    }
+
+    .mdns-warning .mono {
+      color: var(--text);
+    }
+
     .checkbox-cell {
       width: 1%;
       white-space: nowrap;

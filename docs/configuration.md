@@ -126,5 +126,36 @@ does not cross routers unless an mDNS reflector (e.g. `avahi-daemon` with
 `enable-reflector`, or an `macvlan`/host-network container) is in place. In
 containers, see [Docker deployment](docker.md#device-discovery).
 
+### Does discovery have a chance here?
+
+Because a container on a Docker bridge network can never hear mDNS from the
+devices' LAN, the Settings page checks the network on its own terms:
+
+* **Passive.** Before anything is scanned, the page says how likely the scan is
+  to succeed. If a configured device would be reached through a router, a quiet
+  hint appears under the **Discover devices** button naming the devices and the
+  local source address — backups and the device web UIs keep working by IP
+  address, so this is about discovery only. A real alert appears only when a
+  device has *no route at all*, which does affect backups too. Nothing is sent:
+  the check only consults the routing table.
+* **Active.** **Check discovery** runs the same zeroconf queries a real scan
+  uses — for `_shelly._tcp.local` and `_http._tcp.local` — listens for three
+  seconds, and reports one of four outcomes:
+
+  | Result | Meaning |
+  | --- | --- |
+  | `Auto-discovery works here: N Shelly service(s) answered` | The scan will find devices. |
+  | `mDNS is audible (N record(s) seen), but no Shelly device answered` | The segment is right; the devices are off, sleeping, or on another VLAN. |
+  | `No mDNS traffic at all.` | mDNS is not audible from this network, so auto-discovery will find nothing — use `network_mode: host` or a macvlan in the devices' segment. |
+  | `mDNS sockets could not be opened (…)` | The network stack refused the listener; devices added by IP address still work. |
+
+  The same check is available on the command line inside a container:
+
+  ```commandline
+  docker exec retentacle python -c \
+    "from retentacle.discovery import check_mdns; print(check_mdns(['192.168.1.50']).message)"
+  ```
+
+
 The `--discover` option and the `discover: true` configuration value remain
 available as a fallback when no devices are configured in Settings.

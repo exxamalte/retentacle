@@ -265,12 +265,37 @@
       <form method="post" action="/settings/discover" data-discovery-form>
         <button class="button" type="submit">Discover devices</button>
       </form>
+      <button class="button" type="button" data-mdns-check>Check discovery</button>
       <p class="field-help">
         Scan the network via mDNS for up to
         {{ "%g"|format(discovery_timeout) }}
         seconds. Only devices not already added are shown.
       </p>
     </div>
+
+    {% if mdns_segment.unroutable %}
+      <p class="alert mdns-warning" role="alert">
+        <strong>No route to these devices:</strong>
+        <span class="mono">{{ mdns_segment.unroutable|join(", ") }}</span>.
+        Neither auto-discovery nor backups can reach them from this server, so
+        the container needs to be attached to their network.
+      </p>
+    {% endif %}
+
+    {% if mdns_segment.off_segment %}
+      <p class="field-help mdns-hint">
+        <strong>Auto-discovery may come up empty here.</strong>
+        <span class="mono">{{ mdns_segment.off_segment|join(", ") }}</span>
+        would be reached through
+        <span class="mono">{{ mdns_segment.sources|join(", ") or "no local address" }}</span>,
+        which is not the devices' own subnet, and mDNS does not cross routers.
+        Backups and the device web UIs work as usual by IP address — only the
+        scan may find nothing. Use
+        <strong>Check discovery</strong> to see whether mDNS is audible here.
+      </p>
+    {% endif %}
+
+    <p class="field-help mdns-check-result" data-mdns-check-result role="status" aria-live="polite" hidden></p>
 
     <p
       class="field-help discovery-status"
@@ -517,6 +542,16 @@
           The exact redirect URI registered with your provider. Leave empty
           to derive it from the current request — useful when running behind
           a reverse proxy with a different scheme or host.
+        </p>
+        <p class="field-help oidc-redirect-preview">
+          Sent as <code>redirect_uri</code> right now:
+          <span class="mono" data-oidc-redirect-uri>{% if oidc.callback_url %}{{ oidc.callback_url }}{% else %}{{ request.base_url }}oidc/callback{% endif %}</span>
+          — it has to match the value in your provider exactly.
+          {% if not oidc.callback_url %}
+            If this shows an internal host name or <code>http://</code> while
+            you open the app through a proxy, trust the proxy with
+            <code>FORWARDED_ALLOW_IPS</code> or fill in the field above.
+          {% endif %}
         </p>
       </div>
 
@@ -791,6 +826,45 @@
         } finally {
           stopCountdown();
           button.disabled = false;
+        }
+      });
+    })();
+  </script>
+  <script>
+    (() => {
+      const button = document.querySelector('[data-mdns-check]');
+      const result = document.querySelector('[data-mdns-check-result]');
+      if (!button || !result) {
+        return;
+      }
+      const label = button.textContent;
+
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        button.textContent = 'Checking…';
+        result.hidden = false;
+        result.textContent =
+          'Listening for mDNS traffic for a few seconds…';
+        result.className = 'field-help mdns-check-result';
+        try {
+          const response = await fetch('/settings/discover/check', {
+            method: 'POST',
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
+          });
+          if (!response.ok) {
+            throw new Error('The check failed (' + response.status + ')');
+          }
+          const report = await response.json();
+          result.textContent = report.message;
+          result.className =
+            'field-help mdns-check-result ' + (report.usable ? 'ok' : 'bad');
+        } catch (error) {
+          result.textContent = String(error.message || error);
+          result.className = 'field-help mdns-check-result bad';
+        } finally {
+          button.disabled = false;
+          button.textContent = label;
         }
       });
     })();
