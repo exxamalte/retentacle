@@ -1,6 +1,7 @@
 # Changes
 
 ## 2026.11.1
+* Added an mDNS self-check to the Settings page: a quiet hint when devices sit behind a router (discovery only — backups still work by IP), an alert when a device has no route at all, and a "Check discovery" button that listens for real answers.
 * The OIDC settings panel now shows the exact redirect URI being sent, and the server log records it, so provider mismatches are visible at a glance.
 * Self-service password change from the account menu, requiring the current password, a new password and a confirmation; other people's passwords are set by admins with "Set password".
 * Password controls are hidden for accounts without a local password, which sign in through the identity provider; admins can still give them their first password.

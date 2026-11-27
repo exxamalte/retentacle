@@ -38,8 +38,10 @@ from .configuration import Configuration, parse_interval
 from .consts import APPLICATION_NAME, CONTAINER_IMAGE, DATA_FILENAMES
 from .discovery import (
     DiscoveredDevice,
+    check_mdns,
     discover_shelly_device_details,
     iter_shelly_device_details,
+    segment_report,
 )
 from .oidc import (
     DEFAULT_SCOPES,
@@ -724,6 +726,9 @@ def _settings_context(
         "discovery_ran": False,
         "discovery_error": None,
         "discovery_timeout": _discovery_timeout(),
+        "mdns_segment": segment_report(
+            tuple(_effective_ip_addresses(configuration, store) or [])
+        ),
         "saved": False,
         "oidc": _oidc_form_context(store),
     }
@@ -791,6 +796,14 @@ def _register_device_settings_routes(
             discovered_devices=discovered_devices,
             discovery_ran=True,
         )
+
+    @app.post("/settings/discover/check")
+    async def check_discovery_network(request: Request):
+        """Report whether mDNS can reach the devices' network segment."""
+        require_admin(request)
+        devices = tuple(_effective_ip_addresses(configuration, store) or [])
+        check = await asyncio.to_thread(check_mdns, devices)
+        return JSONResponse(check.as_dict())
 
     @app.post("/settings/discover/stream")
     async def discover_devices_stream(request: Request):

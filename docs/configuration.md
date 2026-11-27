@@ -126,5 +126,35 @@ does not cross routers unless an mDNS reflector (e.g. `avahi-daemon` with
 `enable-reflector`, or an `macvlan`/host-network container) is in place. In
 containers, see [Docker deployment](docker.md#device-discovery).
 
+### Does discovery have a chance here?
+
+Because a container on a Docker bridge network can never hear mDNS from the
+devices' LAN, the Settings page checks the network on its own terms:
+
+* **Passive.** Before anything is scanned, the page says how likely the scan is
+  to succeed. If a configured device would be reached through a router, a quiet
+  hint appears under the **Discover devices** button naming the devices and the
+  local source address — backups and the device web UIs keep working by IP
+  address, so this is about discovery only. A real alert appears only when a
+  device has *no route at all*, which does affect backups too. Nothing is sent:
+  the check only consults the routing table.
+* **Active.** **Check discovery** sends a real mDNS query for
+  `_shelly._tcp.local` and `_http._tcp.local`, then listens for three seconds
+  and reports one of four outcomes:
+
+  | Result | Meaning |
+  | --- | --- |
+  | `mDNS works: N Shelly answer(s)` | Discovery will find devices. |
+  | `mDNS traffic is visible … but no Shelly device answered` | The segment is right; the devices are off, sleeping, or on another VLAN. |
+  | `No mDNS traffic at all` | This network cannot see the devices' segment — use `network_mode: host` or a macvlan on it. |
+  | `Multicast queries could not be sent` / `Cannot listen on UDP port 5353` | No multicast route, or another responder holds the port; devices may still be reachable by IP. |
+
+  The same check is available on the command line inside a container:
+
+  ```commandline
+  docker exec retentacle python -c     "from retentacle.discovery import check_mdns; print(check_mdns(['192.168.1.50']).message)"
+  ```
+
+
 The `--discover` option and the `discover: true` configuration value remain
 available as a fallback when no devices are configured in Settings.
